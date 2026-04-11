@@ -132,20 +132,8 @@ def writing_component(student_name: str, session_id: str):
         <span id="ac-text">Античит белсенді — жұмысты адал орындаңыз</span>
     </div>
 
-    <!-- Жазу аймағы -->
-    <textarea id="essay-box" placeholder="Жауабыңызды осында теріңіз..."></textarea>
-
-    <!-- Сөз санауышы -->
-    <div id="word-bar">
-        <span id="word-count">0 сөз</span>
-        <span>Минимум: 150 сөз · Ұсынылады: 250+</span>
-    </div>
-
     <!-- Автосақтау статусы -->
-    <div id="save-status">Сақталмаған</div>
-
-    <!-- Жіберу батырмасы -->
-    <button id="submit-btn" onclick="submitEssay()">✅ Тексеруге жіберу</button>
+    <div id="save-status" style="font-size:11px;color:#aaa;text-align:right;margin-top:4px;">Сақталмаған</div>
 
     <script>
     (function() {{
@@ -164,10 +152,10 @@ def writing_component(student_name: str, session_id: str):
         const dot   = document.getElementById('ac-dot');
         const txt   = document.getElementById('ac-text');
         const bar   = document.getElementById('ac-bar');
-        const essay = document.getElementById('essay-box');
-        const wc    = document.getElementById('word-count');
+        // essay — Streamlit textarea-сы
+
         const saveStatus = document.getElementById('save-status');
-        const btn   = document.getElementById('submit-btn');
+
 
         // ---- Дыбыс ----
         function beep(f=880, d=0.4, t='square') {{
@@ -187,16 +175,29 @@ def writing_component(student_name: str, session_id: str):
             setTimeout(() => beep(440, 0.3, 'sawtooth'), 800);
         }}
 
-        // ---- Streamlit-ке жіберу (античит оқиғалары) ----
-        function send(ev) {{
-            window.parent.postMessage({{
-                type: 'streamlit:setComponentValue',
-                value: {{ student: STUDENT, session: SESSION, event_type: ev,
-                          blur_count: blur, paste_count: paste,
-                          annulled: annulled ? 1 : 0,
-                          timer_expired: expired ? 1 : 0,
-                          essay_text: '' }}
-            }}, '*');
+        // ---- Античит оқиғаларын тікелей Supabase-ке жіберу ----
+        const SKIP_EVENTS = new Set(['start', 'timer_start', 'timer_warning', 'timer_expired']);
+        async function send(ev) {{
+            if (SKIP_EVENTS.has(ev)) return;
+            try {{
+                await fetch(SB_URL + '/rest/v1/anticheat_events', {{
+                    method: 'POST',
+                    headers: {{
+                        'apikey': SB_KEY,
+                        'Authorization': 'Bearer ' + SB_KEY,
+                        'Content-Type': 'application/json',
+                        'Prefer': 'return=minimal'
+                    }},
+                    body: JSON.stringify({{
+                        student_name: STUDENT,
+                        session_id: SESSION,
+                        event_type: ev,
+                        blur_count: blur,
+                        paste_count: paste,
+                        annulled: (annulled || ev === 'annulled') ? 1 : 0
+                    }})
+                }});
+            }} catch(e) {{}}
         }}
 
         // ---- Статус жолағы ----
@@ -210,8 +211,6 @@ def writing_component(student_name: str, session_id: str):
         function doAnnul() {{
             annulled = true;
             if (timerInterval) clearInterval(timerInterval);
-            essay.disabled = true;
-            btn.disabled = true;
             beep(300, 1.5, 'sawtooth');
             setStatus('ЖҰМЫС АННУЛИРЛЕНДІ — мұғалімге хабарланды', '#F09595', '#E24B4A', '#501313', '#E24B4A');
             tBox.className = 'done'; tDisp.textContent = 'XXX';
@@ -243,8 +242,7 @@ def writing_component(student_name: str, session_id: str):
                     tDisp.textContent = '00:00';
                     alarm();
                     setStatus('Уақыт бітті! Жұмысыңызды жіберіңіз.', '#FCEBEB', '#E24B4A', '#A32D2D', '#E24B4A');
-                    btn.classList.add('expired');
-                    btn.textContent = '📤 Жіберу';
+
                     send('timer_expired');
                 }}
             }}, 1000);
@@ -270,8 +268,10 @@ def writing_component(student_name: str, session_id: str):
         // ---- Supabase-ке тікелей сақтау ----
         async function saveDraft() {{
             if (annulled) return;
-            const text = essay.value;
-            const wordCount = text.trim() ? text.trim().split(/\s+/).length : 0;
+            // Streamlit textarea мәнін sessionStorage арқылы аламыз
+            const ta = window.parent.document.querySelector('[data-testid="stTextArea"] textarea');
+            const text = ta ? ta.value : '';
+            const wordCount = text.trim() ? text.trim().split(/[ \t\r\n]+/).length : 0;
             const now = new Date().toISOString();
             try {{
                 if (!draftInserted) {{
@@ -312,12 +312,12 @@ def writing_component(student_name: str, session_id: str):
             }}
         }}
 
-        // ---- Жіберу ----
+        // ---- Жіберу — sessionStorage арқылы ----
         function submitEssay() {{
             const text = essay.value.trim();
             if (!text) {{ alert('Жауап мәтінін жазыңыз!'); return; }}
-            btn.disabled = true;
-            btn.textContent = 'Жіберілуде...';
+            // Мәтінді sessionStorage-ке сақтап, Streamlit-ке хабар береміз
+            window.parent.sessionStorage.setItem('essay_' + SESSION, text);
             window.parent.postMessage({{
                 type: 'streamlit:setComponentValue',
                 value: {{ student: STUDENT, session: SESSION,
@@ -326,24 +326,26 @@ def writing_component(student_name: str, session_id: str):
                           annulled: 0, timer_expired: expired ? 1 : 0,
                           essay_text: text }}
             }}, '*');
+            btn.disabled = true;
+            btn.textContent = 'Жіберілуде...';
         }}
 
-        // ---- Сөз санауыш ----
-        essay.addEventListener('input', () => {{
-            const words = essay.value.trim() ? essay.value.trim().split(/\s+/).length : 0;
-            wc.textContent = words + ' сөз';
-            wc.style.color = words >= 250 ? '#3B6D11' : words >= 150 ? '#854F0B' : '#A32D2D';
-            if (!started && !annulled) startTimer();
-        }});
-
-        // ---- Paste ----
-        essay.addEventListener('paste', () => {{
-            if (annulled) return;
-            paste++;
-            beep(550, 0.3);
-            setStatus('Ескерту! Мәтін қою анықталды!', '#FAEEDA', '#EF9F27', '#854F0B', '#EF9F27');
-            send('paste');
-        }});
+        // ---- Streamlit textarea оқиғалары ----
+        function watchTextarea() {{
+            const ta = window.parent.document.querySelector('[data-testid="stTextArea"] textarea');
+            if (!ta) {{ setTimeout(watchTextarea, 500); return; }}
+            ta.addEventListener('input', () => {{
+                if (!started && !annulled) startTimer();
+            }});
+            ta.addEventListener('paste', () => {{
+                if (annulled) return;
+                paste++;
+                beep(550, 0.3);
+                setStatus('Ескерту! Мәтін қою анықталды!', '#FAEEDA', '#EF9F27', '#854F0B', '#EF9F27');
+                send('paste');
+            }});
+        }}
+        watchTextarea();
 
         // ---- Blur/visibility ----
         document.addEventListener('visibilitychange', () => {{ if (document.hidden) onBlur(); }});
@@ -356,7 +358,7 @@ def writing_component(student_name: str, session_id: str):
     }})();
     </script>
     """
-    return components.html(html, height=460)
+    components.html(html, height=420)
 
 # ==========================================
 # ОҚУШЫ БЕТІ
@@ -442,28 +444,36 @@ Return ONLY valid JSON:
         st.stop()
 
     # JS компоненті — textarea + античит + таймер + autosave
-    ac_data = writing_component(student_name.strip(), session_id)
+    writing_component(student_name.strip(), session_id)
 
-    if ac_data and isinstance(ac_data, dict):
-        ev = ac_data.get("event_type", "")
+    # Мәтін жазу аймағы (Streamlit) — JS autosave жұмыс істеп тұрады
+    st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
+    essay_text = st.text_area(
+        "Жауабыңыз:",
+        height=280,
+        placeholder="Жауабыңызды осында теріңіз...",
+        key=f"essay_input_{session_id}",
+        label_visibility="collapsed"
+    )
 
-        if ev == "submit":
-            # Оқушы жіберді — essay_text сақтап, нәтижені көрсет
-            st.session_state[essay_key]  = ac_data.get("essay_text", "")
+    # Сөз санауыш
+    word_count = len(essay_text.split()) if essay_text.strip() else 0
+    wc_color = "#3B6D11" if word_count >= 250 else "#854F0B" if word_count >= 150 else "#A32D2D"
+    st.markdown(
+        f"<p style='font-size:12px;color:{wc_color};text-align:right;margin-top:4px'>"
+        f"{word_count} сөз (минимум 150, ұсынылады 250+)</p>",
+        unsafe_allow_html=True
+    )
+
+    if st.button("✅ Тексеруге жіберу", type="primary", use_container_width=True,
+                 key=f"submit_{session_id}"):
+        if not essay_text.strip():
+            st.error("Жауап мәтінін жазыңыз!")
+        else:
+            st.session_state[essay_key]  = essay_text
             st.session_state[submit_key] = True
-            save_anticheat(student_name.strip(), session_id, "submit",
-                           ac_data.get("blur_count", 0), ac_data.get("paste_count", 0), 0)
+            save_anticheat(student_name.strip(), session_id, "submit", 0, 0, 0)
             st.rerun()
-
-        elif ev == "annulled":
-            st.session_state[annul_key] = True
-            save_anticheat(student_name.strip(), session_id, "annulled",
-                           ac_data.get("blur_count", 0), ac_data.get("paste_count", 0), 1)
-            st.rerun()
-
-        elif ev not in ("start", ""):
-            save_anticheat(student_name.strip(), session_id, ev,
-                           ac_data.get("blur_count", 0), ac_data.get("paste_count", 0), 0)
 
 elif not student_name.strip():
     st.info("Алдымен аты-жөніңізді және тапсырма суретін жүктеңіз.")
