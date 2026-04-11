@@ -35,13 +35,12 @@ def save_result(student_name: str, result: dict, session_id: str):
     except Exception as e:
         st.warning(f"Сақтауда қате: {e}")
 
-def get_submitted_draft(session_id: str):
-    """submitted=1 болса мәтінді қайтарады"""
+def get_latest_draft(session_id: str):
+    """Соңғы draft мәтінін қайтарады"""
     try:
         res = get_supabase().table("live_drafts")\
             .select("*")\
             .eq("session_id", session_id)\
-            .eq("submitted", 1)\
             .execute()
         if res.data:
             return res.data[0]
@@ -431,21 +430,32 @@ if student_name.strip() and uploaded_file is not None:
             st.info(result["feedback"])
         st.stop()
 
-    # JS компоненті
-    st.subheader("3. Жауабыңызды жазыңыз")
-    st.caption("Жазуды бастағанда таймер автоматты қосылады. Уақыт: 20 минут.")
-    ac_data = writing_component(student_name.strip(), session_id)
+    # Жіберу режимі — JS компонентін жасырамыз
+    submitting_key = f"submitting_{session_id}"
+    if submitting_key not in st.session_state:
+        st.session_state[submitting_key] = False
 
-    # Streamlit жіберу батырмасы
-    if st.button("✅ Тексеруге жіберу", type="primary", use_container_width=True,
-                 key=f"submit_btn_{session_id}"):
+    if not st.session_state.get(submitting_key, False):
+        # JS компоненті — тек жазу кезінде көрінеді
+        st.subheader("3. Жауабыңызды жазыңыз")
+        st.caption("Жазуды бастағанда таймер автоматты қосылады. Уақыт: 20 минут.")
+        writing_component(student_name.strip(), session_id)
+
+        if st.button("✅ Тексеруге жіберу", type="primary", use_container_width=True,
+                     key=f"submit_btn_{session_id}"):
+            st.session_state[submitting_key] = True
+            st.rerun()
+
+    if st.session_state.get(submitting_key, False):
         with st.spinner("⏳ Жұмысыңыз тексерілуде..."):
             # Supabase-тен соңғы draft мәтінін аламыз
             draft = get_latest_draft(session_id)
             essay_text = draft.get("draft_text", "").strip() if draft else ""
 
             if not essay_text:
-                st.error("Жауап табылмады. Алдымен мәтін жазыңыз!")
+                st.session_state[submitting_key] = False
+                st.error("Жауап табылмады. Алдымен мәтін жазыңыз (кемінде 5 секунд жазыңыз)!")
+                st.rerun()
             else:
                 try:
                     genai.configure(api_key=st.secrets["gemini"]["api_key"])
@@ -466,7 +476,9 @@ Return ONLY valid JSON:
                     st.session_state[done_key] = True
                     st.rerun()
                 except Exception as e:
+                    st.session_state[submitting_key] = False
                     st.error(f"Қате шықты: {e}")
+                    st.rerun()
 
 elif not student_name.strip():
     st.info("Алдымен аты-жөніңізді және тапсырма суретін жүктеңіз.")
