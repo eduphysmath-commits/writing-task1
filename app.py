@@ -106,8 +106,17 @@ def writing_component(student_name: str, session_id: str):
     <textarea id="essay-box" placeholder="Жауабыңызды осында теріңіз..."></textarea>
     <div id="bottom-bar">
         <span id="word-count">0 сөз</span>
-        <span id="save-status">Сақталмаған</span>
+        <span id="save-status"></span>
     </div>
+    <button id="show-teacher-btn" onclick="sendToTeacher()" style="
+        width:100%; margin-top:8px; padding:10px;
+        background:transparent; border:1px solid #ddd;
+        border-radius:8px; font-size:13px; color:#555;
+        cursor:pointer; transition:all 0.2s;
+    " onmouseover="this.style.background='#f5f5f5'"
+      onmouseout="this.style.background='transparent'">
+        👁 Мұғалімге көрсету
+    </button>
 
     <script>
     (function() {{
@@ -269,29 +278,46 @@ def writing_component(student_name: str, session_id: str):
             stopAlarm();
         }}
 
-        // ---- Autosave (5 сек) ----
-        async function saveDraft() {{
-            if (annulled || submitting) return;
-            const text = essay.value;
-            const wc = text.trim() ? text.trim().split(/ +/).length : 0;
+        // ---- Мұғалімге жіберу ----
+        async function sendToTeacher() {{
+            const text = essay.value.trim();
+            if (!text) {{ alert('Алдымен мәтін жазыңыз!'); return; }}
+            const wc = text.split(/ +/).length;
             const now = new Date().toISOString();
-            if (!draftInserted) {{
-                const res = await fetch(SB_URL + '/rest/v1/live_drafts', {{
-                    method: 'POST', headers: HEADERS,
-                    body: JSON.stringify({{
-                        student_name: STUDENT, session_id: SESSION,
-                        draft_text: text, word_count: wc, submitted: 0
-                    }})
-                }});
-                if (res.ok || res.status === 201) {{
-                    draftInserted = true;
-                    saveEl.textContent = 'Сақталды: ' + new Date().toLocaleTimeString();
+            const btn = document.getElementById('show-teacher-btn');
+            btn.disabled = true;
+            btn.textContent = 'Жіберілуде...';
+            try {{
+                if (!draftInserted) {{
+                    const res = await fetch(SB_URL + '/rest/v1/live_drafts', {{
+                        method: 'POST', headers: HEADERS,
+                        body: JSON.stringify({{
+                            student_name: STUDENT, session_id: SESSION,
+                            draft_text: text, word_count: wc, submitted: 0
+                        }})
+                    }});
+                    if (res.ok || res.status === 201) draftInserted = true;
+                }} else {{
+                    await sbPatch('live_drafts', 'session_id=eq.' + SESSION, {{
+                        draft_text: text, word_count: wc, updated_at: now
+                    }});
                 }}
-            }} else {{
-                await sbPatch('live_drafts', 'session_id=eq.' + SESSION, {{
-                    draft_text: text, word_count: wc, updated_at: now
-                }});
-                saveEl.textContent = 'Сақталды: ' + new Date().toLocaleTimeString();
+                btn.textContent = '✅ Мұғалімге жіберілді';
+                btn.style.background = '#EAF3DE';
+                btn.style.color = '#3B6D11';
+                btn.style.borderColor = '#639922';
+                saveEl.textContent = 'Жіберілді: ' + new Date().toLocaleTimeString();
+                setTimeout(() => {{
+                    btn.disabled = false;
+                    btn.textContent = '👁 Мұғалімге көрсету';
+                    btn.style.background = '';
+                    btn.style.color = '';
+                    btn.style.borderColor = '';
+                }}, 3000);
+            }} catch(e) {{
+                btn.disabled = false;
+                btn.textContent = '👁 Мұғалімге көрсету';
+                alert('Қате шықты, қайталап көріңіз.');
             }}
         }}
 
@@ -318,7 +344,6 @@ def writing_component(student_name: str, session_id: str):
         window.addEventListener('blur', onBlur);
         window.addEventListener('focus', onFocus);
 
-        setInterval(saveDraft, 5000);
     }})();
     </script>
     """
