@@ -432,7 +432,7 @@ if student_name.strip() and uploaded_file is not None:
             st.subheader("🛠 Жіберілген қателер")
             for e in result["main_errors"]: st.warning(f"• {e}")
             st.subheader("📝 Пікір")
-            st.info(result["feedback"])
+            st.markdown(result["feedback"])
         st.stop()
 
     # Тексеру жүріп жатыр ма?
@@ -468,42 +468,30 @@ if student_name.strip() and uploaded_file is not None:
                 word_count = len(essay_text.split())
                 prompt = f"""You are an expert IELTS Writing Examiner. Evaluate the student's Academic Task 1 report based on the provided image.
 
-Your task is to provide a highly detailed, structured, and constructive evaluation IN KAZAKH. 
+WORD COUNT: {word_count} words.
+SCORING RULES:
+- Under 50 words → Overall MUST be 1.0-2.0
+- 50-100 words → Overall MUST be 2.0-3.5
+- 100-149 words → Overall MUST be 3.5-4.5
+- 150-179 words → slight penalty on TA
+- 180+ words → evaluate normally
+- Scores in exact 0.5 increments only.
+- Overall = exact average of TA, CC, LR, GRA.
 
-CRITICAL RULES:
-1. The feedback MUST be written entirely in natural, professional Kazakh.
-2. Base your feedback strictly on the student's actual text. Quote specific words or sentences they used to prove your points.
-3. Maintain an objective, professional, yet encouraging tone.
-4. You MUST format your response EXACTLY matching the structure below. Do not deviate from these headings.
+Your task is to provide a highly detailed, structured, and constructive evaluation IN KAZAKH.
+Base your feedback strictly on the student's actual text. Quote specific words or sentences they used.
+Maintain an objective, professional, yet encouraging tone.
 
-REQUIRED OUTPUT STRUCTURE (Markdown):
-
-### 1. Task Achievement (Тапсырманың орындалуы): **[Score]**
-* [1-2 sentences explaining what key features or stages were successfully covered]
-* [1 sentence evaluating their 'Overview' paragraph]
-* [1 sentence on what could be improved (if any)]
-
-### 2. Coherence and Cohesion (Логика және байланыс): **[Score]**
-* [Comment on paragraphing and logical flow]
-* [Comment on the linking words used, giving examples from their text]
-* **Ұсыныс:** [Specific, actionable advice to make the text more cohesive]
-
-### 3. Lexical Resource (Сөздік қор): **[Score]**
-* [Praise specific good vocabulary or paraphrasing used by the student]
-* [Point out any repetitive words or suggest better academic alternatives]
-
-### 4. Grammatical Range and Accuracy (Грамматика): **[Score]**
-* [Comment on sentence structures, e.g., use of passive voice, complex sentences]
-* [Point out main grammatical errors gently, or praise high accuracy]
-
----
-
-### Қалай жақсартуға болады? (Tips for [Current Overall Score + 0.5]+)
-1. **[Specific Tip 1]:** [Actionable advice, e.g., "Сөйлемді түрлендіру: ... дегенше, ... деп жазсаңыз ұпай өседі"]
-2. **[Specific Tip 2]:** [Actionable advice on vocabulary, precision, or data selection]
-
-**Қорытынды:** [1-2 sentences summarizing the overall quality of the essay and encouraging the student.]
-"""
+Return ONLY valid JSON (no markdown outside JSON):
+{{
+  "overall": 0.0,
+  "TA": 0.0,
+  "CC": 0.0,
+  "LR": 0.0,
+  "GRA": 0.0,
+  "main_errors": ["Қате 1...", "Қате 2..."],
+  "feedback": "### 1. Task Achievement (Тапсырманың орындалуы): **[Score]**\n* [comment]\n\n### 2. Coherence and Cohesion (Логика және байланыс): **[Score]**\n* [comment]\n* **Ұсыныс:** [advice]\n\n### 3. Lexical Resource (Сөздік қор): **[Score]**\n* [comment]\n\n### 4. Grammatical Range and Accuracy (Грамматика): **[Score]**\n* [comment]\n\n---\n### Қалай жақсартуға болады?\n1. **[Кеңес 1]:** [advice]\n2. **[Кеңес 2]:** [advice]\n\n**Қорытынды:** [summary]"
+}}"""
 
                 last_error = None
                 for attempt in range(MAX_RETRIES):
@@ -513,8 +501,20 @@ REQUIRED OUTPUT STRUCTURE (Markdown):
                             st.info(f"⏳ Кезек күтілуде... {wait} сек ({attempt}/{MAX_RETRIES})")
                             _time.sleep(wait)
 
-                        result = json.loads(
-                            model.generate_content([prompt, image, essay_text]).text)
+                        raw = model.generate_content([prompt, image, essay_text]).text
+                        # JSON блогін тазалаймыз
+                        raw = raw.strip()
+                        if raw.startswith("```"):
+                            raw = raw.split("```")[1]
+                            if raw.startswith("json"):
+                                raw = raw[4:]
+                        result = json.loads(raw.strip())
+                        # Кілттерді қалыпқа келтіреміз
+                        result["TA"]  = result.get("TA",  result.get("ta",  0))
+                        result["CC"]  = result.get("CC",  result.get("cc",  0))
+                        result["LR"]  = result.get("LR",  result.get("lr",  0))
+                        result["GRA"] = result.get("GRA", result.get("gra", 0))
+                        result["overall"] = result.get("overall", result.get("Overall", 0))
                         save_result(student_name.strip(), result, session_id)
                         st.session_state[f"result_{session_id}"] = result
                         st.session_state[done_key] = True

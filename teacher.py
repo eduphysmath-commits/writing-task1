@@ -35,8 +35,7 @@ def get_results_data():
 
 def get_live_drafts():
     try:
-        res = get_supabase().table("live_drafts")\
-            .select("*").order("updated_at", desc=True).execute()
+        res = get_supabase().table("live_drafts")            .select("*")            .eq("submitted", 0)            .order("updated_at", desc=True)            .execute()
         return res.data or []
     except:
         return []
@@ -174,7 +173,7 @@ with tab1:
                 <div style="display:flex;justify-content:space-between;font-size:11px;
                             color:var(--color-text-secondary);margin-top:4px;">
                     <span style="color:{p_color};font-weight:500;">{int(progress*100)}%</span>
-                    <span>Минимум: 250 сөз</span>
+                    <span>Минимум: 150 сөз</span>
                 </div>
             </div>
             """, unsafe_allow_html=True)
