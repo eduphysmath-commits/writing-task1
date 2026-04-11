@@ -2,7 +2,6 @@ import streamlit as st
 import streamlit.components.v1 as components
 import google.generativeai as genai
 import json
-import time
 from PIL import Image
 from datetime import datetime
 from supabase import create_client, Client
@@ -339,6 +338,11 @@ def writing_component(student_name: str, session_id: str):
             await logEvent('submit');
             saveEl.textContent = 'Жіберілді! Нәтиже күтіңіз...';
             btn.textContent = '⏳ Тексерілуде...';
+            // Streamlit-ке submit хабарын жіберу
+            window.parent.postMessage({{
+                type: 'streamlit:setComponentValue',
+                value: {{ event_type: 'submitted' }}
+            }}, '*');
         }}
 
         // ---- Textarea оқиғалары ----
@@ -370,7 +374,7 @@ def writing_component(student_name: str, session_id: str):
     }})();
     </script>
     """
-    components.html(html, height=460)
+    return components.html(html, height=460)
 
 # ==========================================
 # ОҚУШЫ БЕТІ
@@ -432,19 +436,39 @@ if student_name.strip() and uploaded_file is not None:
     # JS компоненті
     st.subheader("3. Жауабыңызды жазыңыз")
     st.caption("Жазуды бастағанда таймер автоматты қосылады. Уақыт: 20 минут.")
-    writing_component(student_name.strip(), session_id)
+    ac_data = writing_component(student_name.strip(), session_id)
 
-    # Streamlit submitted жазбаны тексереді (3 сек сайын)
-    with st.spinner(""):
-        draft = get_submitted_draft(session_id)
-        if draft:
-            essay_text = draft.get("draft_text", "")
-            if essay_text.strip():
-                try:
-                    genai.configure(api_key=st.secrets["gemini"]["api_key"])
-                    model = genai.GenerativeModel('gemini-2.5-flash',
-                        generation_config={"response_mime_type": "application/json"})
-                    prompt = """Act as an expert IELTS examiner. Look at the provided image and read the student's Task 1 report.
+    # JS-тен 'submitted' хабары келсе waiting режимін қосамыз
+    if ac_data and isinstance(ac_data, dict):
+        if ac_data.get("event_type") == "submitted":
+            st.session_state[f"waiting_{session_id}"] = True
+            st.rerun()
+
+    # Жіберу күйін session_state-та бақылаймыз
+    waiting_key = f"waiting_{session_id}"
+    if waiting_key not in st.session_state:
+        st.session_state[waiting_key] = False
+
+    # Оқушы жіберу батырмасын басқанда бірден тексереміз
+    if st.session_state.get(waiting_key, False):
+        with st.spinner("⏳ Жұмысыңыз тексерілуде, күтіңіз..."):
+            # submitted=1 болғанша күтеміз (макс 30 сек)
+            import time as _time
+            draft = None
+            for _ in range(15):
+                draft = get_submitted_draft(session_id)
+                if draft:
+                    break
+                _time.sleep(2)
+
+            if draft:
+                essay_text = draft.get("draft_text", "")
+                if essay_text.strip():
+                    try:
+                        genai.configure(api_key=st.secrets["gemini"]["api_key"])
+                        model = genai.GenerativeModel('gemini-2.5-flash',
+                            generation_config={"response_mime_type": "application/json"})
+                        prompt = """Act as an expert IELTS examiner. Look at the provided image and read the student's Task 1 report.
 Evaluate based on official 9-band IELTS descriptors. Scores in 0.5 increments.
 Criteria: TA, CC, LR, GRA. Calculate Overall as exact average.
 Write 'main_errors' and 'feedback' IN KAZAKH LANGUAGE. Friendly, encouraging tone.
@@ -452,19 +476,19 @@ Return ONLY valid JSON:
 {"overall":6.5,"TA":6.0,"CC":6.5,"LR":7.0,"GRA":6.5,
 "main_errors":["Қате 1...","Қате 2..."],
 "feedback":"Қазақ тіліндегі пікір..."}"""
-                    with st.spinner("Жұмысыңыз тексерілуде..."):
                         result = json.loads(
                             model.generate_content([prompt, image, essay_text]).text)
                         save_result(student_name.strip(), result, session_id)
                         st.session_state[f"result_{session_id}"] = result
                         st.session_state[done_key] = True
+                        st.session_state[waiting_key] = False
                         st.rerun()
-                except Exception as e:
-                    st.error(f"Қате шықты: {e}")
-        else:
-            # 3 сек күтіп қайта тексереді
-            time.sleep(3)
-            st.rerun()
+                    except Exception as e:
+                        st.session_state[waiting_key] = False
+                        st.error(f"Қате шықты: {e}")
+            else:
+                st.session_state[waiting_key] = False
+                st.error("Жіберу уақыты өтті. Қайталап көріңіз.")
 
 elif not student_name.strip():
     st.info("Алдымен аты-жөніңізді және тапсырма суретін жүктеңіз.")
