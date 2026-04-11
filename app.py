@@ -73,6 +73,8 @@ def delete_live_draft(session_id: str):
         pass
 
 def anticheat_timer_component(student_name: str, session_id: str):
+    sb_url = st.secrets["supabase"]["url"]
+    sb_key = st.secrets["supabase"]["key"]
     html = f"""
     <style>
         #timer-box {{
@@ -152,19 +154,46 @@ def anticheat_timer_component(student_name: str, session_id: str):
         document.addEventListener('paste',()=>{{if(annulled)return;paste++;beep(550,0.3);status('Ескерту! Мәтін қою анықталды!','#FAEEDA','#EF9F27','#854F0B','#EF9F27');send('paste');}});
         document.addEventListener('keydown',(e)=>{{if(!started&&!annulled&&e.key&&e.key.length===1)startTimer();}});
 
-        // 5 секунд сайын мәтінді автосақтау
-        setInterval(()=>{{
+        // 5 секунд сайын тікелей Supabase-ке жіберу
+        const SB_URL = '{sb_url}';
+        const SB_KEY = '{sb_key}';
+        let draftInserted = false;
+
+        async function saveDraft() {{
             if(annulled) return;
             const textarea = window.parent.document.querySelector('textarea');
             const text = textarea ? textarea.value : '';
-            window.parent.postMessage({{
-                type: 'streamlit:setComponentValue',
-                value: {{ student: STUDENT, session: SESSION, event_type: 'autosave',
-                          blur_count: blur, paste_count: paste,
-                          annulled: annulled?1:0, timer_expired: expired?1:0,
-                          draft_text: text }}
-            }}, '*');
-        }}, 5000);
+            const wordCount = text.trim() ? text.trim().split(/\s+/).length : 0;
+            const now = new Date().toISOString();
+            try {{
+                if(!draftInserted) {{
+                    const res = await fetch(SB_URL + '/rest/v1/live_drafts', {{
+                        method: 'POST',
+                        headers: {{
+                            'apikey': SB_KEY, 'Authorization': 'Bearer ' + SB_KEY,
+                            'Content-Type': 'application/json', 'Prefer': 'return=minimal'
+                        }},
+                        body: JSON.stringify({{
+                            student_name: STUDENT, session_id: SESSION,
+                            draft_text: text, word_count: wordCount
+                        }})
+                    }});
+                    if(res.ok || res.status === 201) draftInserted = true;
+                }} else {{
+                    await fetch(SB_URL + '/rest/v1/live_drafts?session_id=eq.' + SESSION, {{
+                        method: 'PATCH',
+                        headers: {{
+                            'apikey': SB_KEY, 'Authorization': 'Bearer ' + SB_KEY,
+                            'Content-Type': 'application/json', 'Prefer': 'return=minimal'
+                        }},
+                        body: JSON.stringify({{
+                            draft_text: text, word_count: wordCount, updated_at: now
+                        }})
+                    }});
+                }}
+            }} catch(e) {{}}
+        }}
+        setInterval(saveDraft, 5000);
 
         send('start');
     }})();
