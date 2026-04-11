@@ -282,6 +282,9 @@ def writing_component(student_name: str, session_id: str):
             btn.textContent = 'Жіберілуде...';
             try {{
                 if (!draftInserted) {{
+                    await fetch(SB_URL + '/rest/v1/live_drafts?session_id=eq.' + SESSION, {{
+                        method: 'DELETE', headers: HEADERS
+                    }});
                     const res = await fetch(SB_URL + '/rest/v1/live_drafts', {{
                         method: 'POST', headers: HEADERS,
                         body: JSON.stringify({{
@@ -291,8 +294,9 @@ def writing_component(student_name: str, session_id: str):
                     }});
                     if (res.ok || res.status === 201) draftInserted = true;
                 }} else {{
-                    await sbPatch('live_drafts', 'session_id=eq.' + SESSION, {{
-                        draft_text: text, word_count: wc, updated_at: now
+                    await fetch(SB_URL + '/rest/v1/live_drafts?session_id=eq.' + SESSION, {{
+                        method: 'PATCH', headers: HEADERS,
+                        body: JSON.stringify({{ draft_text: text, word_count: wc, updated_at: now }})
                     }});
                 }}
                 btn.textContent = '✅ Жіберілді';

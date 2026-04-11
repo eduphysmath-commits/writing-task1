@@ -284,44 +284,43 @@ def writing_component(student_name: str, session_id: str):
             if (!text) {{ alert('Алдымен мәтін жазыңыз!'); return; }}
             teacherBtnActive = true;
             setTimeout(() => {{ teacherBtnActive = false; }}, 2000);
-            const wc = text.split(/ +/).length;
+            const wc = text.trim().split(/ +/).length;
             const now = new Date().toISOString();
             const btn = document.getElementById('show-teacher-btn');
             btn.disabled = true;
-            btn.textContent = 'Жіберілуде...';
-            try {{
-                console.log('SB_URL:', SB_URL);
-                console.log('SB_KEY длина:', SB_KEY ? SB_KEY.length : 'БОС');
-                console.log('Text длина:', text.length);
-                console.log('draftInserted:', draftInserted);
+            btn.textContent = '⏳ Жіберілуде...';
 
-                let fetchRes;
+            const payload = {{
+                student_name: STUDENT,
+                session_id: SESSION,
+                draft_text: text,
+                word_count: wc,
+                submitted: 0
+            }};
+
+            try {{
                 if (!draftInserted) {{
-                    fetchRes = await fetch(SB_URL + '/rest/v1/live_drafts', {{
-                        method: 'POST', headers: HEADERS,
-                        body: JSON.stringify({{
-                            student_name: STUDENT, session_id: SESSION,
-                            draft_text: text, word_count: wc, submitted: 0
-                        }})
+                    // Алдымен жою — қайталанған жазба болмасын
+                    await fetch(SB_URL + '/rest/v1/live_drafts?session_id=eq.' + SESSION, {{
+                        method: 'DELETE', headers: HEADERS
                     }});
-                    console.log('POST статус:', fetchRes.status);
-                    if (fetchRes.ok || fetchRes.status === 201) draftInserted = true;
-                    else {{
-                        const errText = await fetchRes.text();
-                        console.error('POST қате:', errText);
+                    const res = await fetch(SB_URL + '/rest/v1/live_drafts', {{
+                        method: 'POST', headers: HEADERS,
+                        body: JSON.stringify(payload)
+                    }});
+                    if (res.ok || res.status === 201) {{
+                        draftInserted = true;
                     }}
                 }} else {{
-                    fetchRes = await fetch(SB_URL + '/rest/v1/live_drafts?session_id=eq.' + SESSION, {{
+                    await fetch(SB_URL + '/rest/v1/live_drafts?session_id=eq.' + SESSION, {{
                         method: 'PATCH', headers: HEADERS,
                         body: JSON.stringify({{ draft_text: text, word_count: wc, updated_at: now }})
                     }});
-                    console.log('PATCH статус:', fetchRes.status);
                 }}
-                btn.textContent = '✅ Мұғалімге жіберілді';
+                btn.textContent = '✅ Жіберілді!';
                 btn.style.background = '#EAF3DE';
                 btn.style.color = '#3B6D11';
                 btn.style.borderColor = '#639922';
-                saveEl.textContent = 'Жіберілді: ' + new Date().toLocaleTimeString();
                 setTimeout(() => {{
                     btn.disabled = false;
                     btn.textContent = '👁 Айнұр ұстазға көрсету';
@@ -330,10 +329,8 @@ def writing_component(student_name: str, session_id: str):
                     btn.style.borderColor = '';
                 }}, 3000);
             }} catch(e) {{
-                console.error('sendToTeacher қате:', e);
                 btn.disabled = false;
                 btn.textContent = '👁 Айнұр ұстазға көрсету';
-                alert('Қате: ' + e.message);
             }}
         }}
 

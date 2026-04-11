@@ -68,7 +68,7 @@ with col_h1:
     st.markdown("<h1 style='font-size:22px;font-weight:500;margin:0 0 4px;'>Мұғалім мониторы</h1>",
                 unsafe_allow_html=True)
 with col_h2:
-    if st.button("🔄 Жаңарту", use_container_width=True):
+    if st.button("📂 Оқушылар жазған жұмыстарын ашу", use_container_width=True):
         st.session_state["live_drafts_cache"] = get_live_drafts()
         st.session_state["ac_cache"] = get_anticheat_data()
         st.session_state["results_cache"] = get_results_data()
@@ -129,7 +129,7 @@ with tab1:
     with col_l1:
         st.caption(f"Соңғы жаңарту: {st.session_state['live_last_updated']} · {len(drafts_all)} оқушы жазып жатыр")
     with col_l2:
-        if st.button("🔄", key="live_ref", help="Тек live жаңарту"):
+        if st.button("📂 Жұмыстарды жаңарту", key="live_ref", help="Тек live жаңарту"):
             st.session_state["live_drafts_cache"] = get_live_drafts()
             st.session_state["live_last_updated"] = datetime.now().strftime("%H:%M:%S")
             st.rerun()
@@ -137,7 +137,7 @@ with tab1:
     if not drafts_all:
         st.markdown("""
         <div style="text-align:center;padding:2rem;color:var(--color-text-secondary);font-size:14px;">
-            Жаңарту батырмасын басыңыз
+            Жұмыстарды ашу батырмасын басыңыз
         </div>
         """, unsafe_allow_html=True)
     else:
@@ -191,7 +191,7 @@ with tab2:
     clean  = [e for e in events if e.get("event_type") not in ("autosave","start","timer_start")]
 
     if not clean:
-        st.info("Жаңарту батырмасын басыңыз немесе оқиға жоқ.")
+        st.info("Жұмыстарды ашу батырмасын басыңыз немесе оқиға жоқ.")
     else:
         col_f1, col_f2 = st.columns(2)
         with col_f1:
@@ -258,7 +258,7 @@ with tab2:
 with tab3:
     results = st.session_state["results_cache"]
     if not results:
-        st.info("Жаңарту батырмасын басыңыз немесе нәтиже жоқ.")
+        st.info("Жұмыстарды ашу батырмасын басыңыз немесе нәтиже жоқ.")
     else:
         names_r  = sorted(set(r.get("student_name","") for r in results))
         sel_r    = st.selectbox("Оқушы:", ["Барлығы"] + names_r, key="res_filter")
@@ -327,7 +327,7 @@ with tab3:
 # ==========================================
 with tab4:
     if not results_all:
-        st.info("Жаңарту батырмасын басыңыз немесе деректер жоқ.")
+        st.info("Жұмыстарды ашу батырмасын басыңыз немесе деректер жоқ.")
     else:
         total_st  = len(set(r.get("student_name","") for r in results_all))
         total_res = len(results_all)
