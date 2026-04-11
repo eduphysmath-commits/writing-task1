@@ -41,7 +41,17 @@ def get_live_drafts():
     except:
         return []
 
-# Session state
+# Session state — бет ашылғанда автоматты жүктейміз
+if "data_loaded" not in st.session_state:
+    st.session_state["data_loaded"] = False
+
+if not st.session_state["data_loaded"]:
+    st.session_state["live_drafts_cache"] = get_live_drafts()
+    st.session_state["ac_cache"] = get_anticheat_data()
+    st.session_state["results_cache"] = get_results_data()
+    st.session_state["live_last_updated"] = datetime.now().strftime("%H:%M:%S")
+    st.session_state["data_loaded"] = True
+
 for key, val in [
     ("live_drafts_cache", []),
     ("live_last_updated", "—"),
