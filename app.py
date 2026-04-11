@@ -128,8 +128,8 @@ def writing_component(student_name: str, session_id: str):
     (function() {{
         const STUDENT = "{student_name}";
         const SESSION = "{session_id}";
-        const SB_URL  = "{sb_url}";
-        const SB_KEY  = "{sb_key}";
+        const SB_URL  = '{sb_url}';
+        const SB_KEY  = '{sb_key}';
         const TOTAL   = 1200;
 
         let blur = 0, paste = 0, annulled = false;
@@ -146,21 +146,6 @@ def writing_component(student_name: str, session_id: str):
         const saveEl = document.getElementById('save-status');
 
         // ---- Дыбыс ----
-        function beep(f=880, d=0.4, t='square') {{
-            try {{
-                const ctx = new (window.AudioContext || window.webkitAudioContext)();
-                const o = ctx.createOscillator(), g = ctx.createGain();
-                o.connect(g); g.connect(ctx.destination);
-                o.type = t; o.frequency.value = f;
-                g.gain.setValueAtTime(0.3, ctx.currentTime);
-                g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + d);
-                o.start(ctx.currentTime); o.stop(ctx.currentTime + d);
-            }} catch(e) {{}}
-        }}
-        function alarm() {{
-            beep(440, 0.3, 'sawtooth');
-            setTimeout(() => beep(440, 0.3, 'sawtooth'), 400);
-            setTimeout(() => beep(440, 0.3, 'sawtooth'), 800);
         }}
 
         // ---- Supabase fetch helpers ----
@@ -211,7 +196,6 @@ def writing_component(student_name: str, session_id: str):
             if (timerInterval) clearInterval(timerInterval);
             essay.disabled = true;
             btn.disabled = true;
-            beep(300, 1.5, 'sawtooth');
             setStatus('ЖҰМЫС АННУЛИРЛЕНДІ — мұғалімге хабарланды',
                 '#F09595', '#E24B4A', '#501313', '#E24B4A');
             tBox.className = 'done'; tDisp.textContent = 'XXX';
@@ -233,7 +217,6 @@ def writing_component(student_name: str, session_id: str):
                 tDisp.textContent = fmt(left);
                 tBox.className = left <= 0 ? 'done' : left <= 60 ? 'red' : left <= 300 ? 'yellow' : '';
                 if (left === 60) {{
-                    beep(660, 0.5);
                     setStatus('1 минут қалды! Жіберуге дайындалыңыз.',
                         '#FAEEDA', '#EF9F27', '#854F0B', '#EF9F27');
                     logEvent('timer_warning');
@@ -242,7 +225,6 @@ def writing_component(student_name: str, session_id: str):
                     clearInterval(timerInterval);
                     expired = true;
                     tDisp.textContent = '00:00';
-                    alarm();
                     setStatus('Уақыт бітті! Жұмысыңызды жіберіңіз.',
                         '#FCEBEB', '#E24B4A', '#A32D2D', '#E24B4A');
                     logEvent('timer_expired');
@@ -251,17 +233,32 @@ def writing_component(student_name: str, session_id: str):
         }}
 
         // ---- Үздіксіз дыбыс (беттен шыққанда) ----
-        let alarmCtx = null;
-        let alarmOsc = null;
-        let alarmGain = null;
+
+        // ---- Дыбыс (тек алғашқы 10 минутта) ----
+        function beep(f=880, d=0.4, t='square') {{
+            // Тек 10 мин өтпеген болса (left > 600 сек)
+            if (left < TOTAL - 600) return;
+            try {{
+                const ctx = new (window.AudioContext || window.webkitAudioContext)();
+                const o = ctx.createOscillator(), g = ctx.createGain();
+                o.connect(g); g.connect(ctx.destination);
+                o.type = t; o.frequency.value = f;
+                g.gain.setValueAtTime(0.3, ctx.currentTime);
+                g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + d);
+                o.start(ctx.currentTime); o.stop(ctx.currentTime + d);
+            }} catch(e) {{}}
+        }}
+
+        let alarmCtx = null, alarmOsc = null, alarmGain = null;
 
         function startAlarm() {{
+            // Тек 10 мин өтпеген болса
+            if (left < TOTAL - 600) return;
             try {{
                 alarmCtx = new (window.AudioContext || window.webkitAudioContext)();
                 alarmGain = alarmCtx.createGain();
                 alarmGain.gain.value = 0.4;
                 alarmGain.connect(alarmCtx.destination);
-
                 function playTone() {{
                     if (!alarmCtx) return;
                     alarmOsc = alarmCtx.createOscillator();
@@ -272,13 +269,9 @@ def writing_component(student_name: str, session_id: str):
                     alarmOsc.frequency.setValueAtTime(880, alarmCtx.currentTime + 0.6);
                     alarmOsc.start(alarmCtx.currentTime);
                     alarmOsc.stop(alarmCtx.currentTime + 0.9);
-                    alarmOsc.onended = () => {{
-                        if (alarmCtx) playTone();
-                    }};
+                    alarmOsc.onended = () => {{ if (alarmCtx) playTone(); }};
                 }}
                 playTone();
-
-                // 15 секундтан кейін автоматты тоқтайды
                 setTimeout(() => stopAlarm(), 15000);
             }} catch(e) {{}}
         }}
@@ -289,6 +282,15 @@ def writing_component(student_name: str, session_id: str):
                 if (alarmCtx) {{ alarmCtx.close(); alarmCtx = null; }}
             }} catch(e) {{}}
         }}
+                }}
+                playTone();
+
+                // 15 секундтан кейін автоматты тоқтайды
+                setTimeout(() => stopAlarm(), 15000);
+            }} catch(e) {{}}
+        }}
+
+        function stopAlarm() {{ /* дыбыс жоқ */ }}
 
         // ---- Blur ----
         function onBlur() {{
@@ -313,10 +315,6 @@ def writing_component(student_name: str, session_id: str):
             stopAlarm();
         }}
 
-        // Страница жасырылғанда (submit болғанда) дыбыс тоқтайды
-        document.addEventListener('visibilitychange', () => {{
-            if (!document.hidden) stopAlarm();
-        }});
 
         // ---- Autosave (5 сек) ----
         async function saveDraft() {{
@@ -358,7 +356,6 @@ def writing_component(student_name: str, session_id: str):
         essay.addEventListener('paste', () => {{
             if (annulled) return;
             paste++;
-            beep(550, 0.3);
             setStatus('Ескерту! Мәтін қою анықталды!',
                 '#FAEEDA', '#EF9F27', '#854F0B', '#EF9F27');
             logEvent('paste');
@@ -375,9 +372,6 @@ def writing_component(student_name: str, session_id: str):
         // ---- 5 сек autosave ----
         setInterval(saveDraft, 5000);
 
-        // Бет жабылғанда немесе iframe жойылғанда дыбыс тоқтайды
-        window.addEventListener('beforeunload', stopAlarm);
-        window.addEventListener('pagehide', stopAlarm);
 
     }})();
     </script>
