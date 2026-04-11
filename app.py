@@ -2,12 +2,12 @@ import streamlit as st
 import streamlit.components.v1 as components
 import google.generativeai as genai
 import json
+import time as _time
 from PIL import Image
 from datetime import datetime
 from supabase import create_client, Client
 
 st.set_page_config(page_title="TEN: IELTS Task 1", page_icon="✏️", layout="centered")
-
 st.markdown("""
 <style>
     [data-testid="stSidebar"] { display: none; }
@@ -29,19 +29,15 @@ def save_result(student_name: str, result: dict, session_id: str):
             "main_errors": result["main_errors"],
             "feedback": result["feedback"],
         }).execute()
-        # live_drafts жойылады
         get_supabase().table("live_drafts")\
             .delete().eq("session_id", session_id).execute()
     except Exception as e:
         st.warning(f"Сақтауда қате: {e}")
 
 def get_latest_draft(session_id: str):
-    """Соңғы draft мәтінін қайтарады"""
     try:
         res = get_supabase().table("live_drafts")\
-            .select("*")\
-            .eq("session_id", session_id)\
-            .execute()
+            .select("*").eq("session_id", session_id).execute()
         if res.data:
             return res.data[0]
     except:
@@ -56,7 +52,6 @@ def writing_component(student_name: str, session_id: str):
     <style>
         * {{ box-sizing: border-box; margin: 0; padding: 0; font-family: sans-serif; }}
         body {{ background: transparent; }}
-
         #timer-box {{
             position: fixed; top: 16px; right: 16px; z-index: 9999;
             background: #EAF3DE; border: 1.5px solid #639922;
@@ -74,7 +69,6 @@ def writing_component(student_name: str, session_id: str):
         #timer-box.red #timer-display {{ color: #501313; }}
         #timer-box.done {{ background: #F09595; border-color: #E24B4A; animation: pulse 1s ease-in-out infinite; }}
         @keyframes pulse {{ 0%,100% {{ transform: scale(1); }} 50% {{ transform: scale(1.04); }} }}
-
         #ac-bar {{
             padding: 10px 16px; border-radius: 8px; margin-bottom: 10px;
             background: #EAF3DE; border-left: 4px solid #639922;
@@ -82,7 +76,6 @@ def writing_component(student_name: str, session_id: str):
             display: flex; align-items: center; gap: 8px; transition: all 0.3s;
         }}
         .ac-dot {{ width: 10px; height: 10px; border-radius: 50%; background: #639922; flex-shrink: 0; }}
-
         #essay-box {{
             width: 100%; height: 280px;
             border: 1px solid #ddd; border-radius: 8px;
@@ -94,35 +87,27 @@ def writing_component(student_name: str, session_id: str):
         }}
         #essay-box:focus {{ border-color: #639922; }}
         #essay-box:disabled {{ background: #f5f5f5; color: #888; cursor: not-allowed; }}
-
         #bottom-bar {{
             display: flex; justify-content: space-between; align-items: center;
-            margin-top: 8px; margin-bottom: 10px;
+            margin-top: 8px; margin-bottom: 4px;
         }}
         #word-count {{ font-size: 12px; font-weight: 500; color: #A32D2D; }}
         #save-status {{ font-size: 11px; color: #aaa; }}
-
-
     </style>
 
     <div id="timer-box">
         <div id="timer-label">Уақыт</div>
         <div id="timer-display">20:00</div>
     </div>
-
     <div id="ac-bar">
         <div class="ac-dot" id="ac-dot"></div>
         <span id="ac-text">Античит белсенді — жұмысты адал орындаңыз</span>
     </div>
-
     <textarea id="essay-box" placeholder="Жауабыңызды осында теріңіз..."></textarea>
-
     <div id="bottom-bar">
         <span id="word-count">0 сөз</span>
         <span id="save-status">Сақталмаған</span>
     </div>
-
-
 
     <script>
     (function() {{
@@ -135,6 +120,7 @@ def writing_component(student_name: str, session_id: str):
         let blur = 0, paste = 0, annulled = false;
         let started = false, left = TOTAL, timerInterval = null, expired = false;
         let draftInserted = false, submitting = false;
+        let alarmCtx = null, alarmOsc = null, alarmGain = null;
 
         const tBox   = document.getElementById('timer-box');
         const tDisp  = document.getElementById('timer-display');
@@ -145,10 +131,7 @@ def writing_component(student_name: str, session_id: str):
         const wcEl   = document.getElementById('word-count');
         const saveEl = document.getElementById('save-status');
 
-        // ---- Дыбыс ----
-        }}
-
-        // ---- Supabase fetch helpers ----
+        // ---- Supabase helpers ----
         const HEADERS = {{
             'apikey': SB_KEY, 'Authorization': 'Bearer ' + SB_KEY,
             'Content-Type': 'application/json', 'Prefer': 'return=minimal'
@@ -172,7 +155,7 @@ def writing_component(student_name: str, session_id: str):
             }} catch(e) {{}}
         }}
 
-        // ---- Античит оқиғасын сақтау ----
+        // ---- Античит логгер ----
         async function logEvent(ev) {{
             if (ev === 'start') return;
             await sbPost('anticheat_events', {{
@@ -183,19 +166,51 @@ def writing_component(student_name: str, session_id: str):
             }});
         }}
 
-        // ---- Статус жолағы ----
+        // ---- Статус ----
         function setStatus(msg, bg, bc, c, dc) {{
             bar.style.background = bg; bar.style.borderColor = bc;
             bar.style.color = c; dot.style.background = dc;
             txt.textContent = msg;
         }}
 
+        // ---- Дыбыс (тек алғашқы 10 минутта) ----
+        function startAlarm() {{
+            if (left < TOTAL - 600) return;
+            try {{
+                alarmCtx = new (window.AudioContext || window.webkitAudioContext)();
+                alarmGain = alarmCtx.createGain();
+                alarmGain.gain.value = 0.4;
+                alarmGain.connect(alarmCtx.destination);
+                function playTone() {{
+                    if (!alarmCtx) return;
+                    alarmOsc = alarmCtx.createOscillator();
+                    alarmOsc.connect(alarmGain);
+                    alarmOsc.type = 'square';
+                    alarmOsc.frequency.setValueAtTime(880, alarmCtx.currentTime);
+                    alarmOsc.frequency.setValueAtTime(660, alarmCtx.currentTime + 0.3);
+                    alarmOsc.frequency.setValueAtTime(880, alarmCtx.currentTime + 0.6);
+                    alarmOsc.start(alarmCtx.currentTime);
+                    alarmOsc.stop(alarmCtx.currentTime + 0.9);
+                    alarmOsc.onended = () => {{ if (alarmCtx) playTone(); }};
+                }}
+                playTone();
+                setTimeout(() => stopAlarm(), 15000);
+            }} catch(e) {{}}
+        }}
+
+        function stopAlarm() {{
+            try {{
+                if (alarmOsc) {{ alarmOsc.onended = null; alarmOsc.stop(); alarmOsc = null; }}
+                if (alarmCtx) {{ alarmCtx.close(); alarmCtx = null; }}
+            }} catch(e) {{}}
+        }}
+
         // ---- Аннулирлеу ----
         function doAnnul() {{
             annulled = true;
             if (timerInterval) clearInterval(timerInterval);
+            stopAlarm();
             essay.disabled = true;
-            btn.disabled = true;
             setStatus('ЖҰМЫС АННУЛИРЛЕНДІ — мұғалімге хабарланды',
                 '#F09595', '#E24B4A', '#501313', '#E24B4A');
             tBox.className = 'done'; tDisp.textContent = 'XXX';
@@ -232,66 +247,6 @@ def writing_component(student_name: str, session_id: str):
             }}, 1000);
         }}
 
-        // ---- Үздіксіз дыбыс (беттен шыққанда) ----
-
-        // ---- Дыбыс (тек алғашқы 10 минутта) ----
-        function beep(f=880, d=0.4, t='square') {{
-            // Тек 10 мин өтпеген болса (left > 600 сек)
-            if (left < TOTAL - 600) return;
-            try {{
-                const ctx = new (window.AudioContext || window.webkitAudioContext)();
-                const o = ctx.createOscillator(), g = ctx.createGain();
-                o.connect(g); g.connect(ctx.destination);
-                o.type = t; o.frequency.value = f;
-                g.gain.setValueAtTime(0.3, ctx.currentTime);
-                g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + d);
-                o.start(ctx.currentTime); o.stop(ctx.currentTime + d);
-            }} catch(e) {{}}
-        }}
-
-        let alarmCtx = null, alarmOsc = null, alarmGain = null;
-
-        function startAlarm() {{
-            // Тек 10 мин өтпеген болса
-            if (left < TOTAL - 600) return;
-            try {{
-                alarmCtx = new (window.AudioContext || window.webkitAudioContext)();
-                alarmGain = alarmCtx.createGain();
-                alarmGain.gain.value = 0.4;
-                alarmGain.connect(alarmCtx.destination);
-                function playTone() {{
-                    if (!alarmCtx) return;
-                    alarmOsc = alarmCtx.createOscillator();
-                    alarmOsc.connect(alarmGain);
-                    alarmOsc.type = 'square';
-                    alarmOsc.frequency.setValueAtTime(880, alarmCtx.currentTime);
-                    alarmOsc.frequency.setValueAtTime(660, alarmCtx.currentTime + 0.3);
-                    alarmOsc.frequency.setValueAtTime(880, alarmCtx.currentTime + 0.6);
-                    alarmOsc.start(alarmCtx.currentTime);
-                    alarmOsc.stop(alarmCtx.currentTime + 0.9);
-                    alarmOsc.onended = () => {{ if (alarmCtx) playTone(); }};
-                }}
-                playTone();
-                setTimeout(() => stopAlarm(), 15000);
-            }} catch(e) {{}}
-        }}
-
-        function stopAlarm() {{
-            try {{
-                if (alarmOsc) {{ alarmOsc.onended = null; alarmOsc.stop(); alarmOsc = null; }}
-                if (alarmCtx) {{ alarmCtx.close(); alarmCtx = null; }}
-            }} catch(e) {{}}
-        }}
-                }}
-                playTone();
-
-                // 15 секундтан кейін автоматты тоқтайды
-                setTimeout(() => stopAlarm(), 15000);
-            }} catch(e) {{}}
-        }}
-
-        function stopAlarm() {{ /* дыбыс жоқ */ }}
-
         // ---- Blur ----
         function onBlur() {{
             if (annulled || expired) return;
@@ -306,7 +261,6 @@ def writing_component(student_name: str, session_id: str):
                     '#FCEBEB', '#E24B4A', '#A32D2D', '#E24B4A');
                 logEvent('blur_2');
             }} else {{
-                stopAlarm();
                 doAnnul();
             }}
         }}
@@ -314,7 +268,6 @@ def writing_component(student_name: str, session_id: str):
         function onFocus() {{
             stopAlarm();
         }}
-
 
         // ---- Autosave (5 сек) ----
         async function saveDraft() {{
@@ -342,9 +295,6 @@ def writing_component(student_name: str, session_id: str):
             }}
         }}
 
-        // ---- Submit батырмасы жоқ — Streamlit батырмасын қолданамыз ----
-        // Autosave мәтінді Supabase-ке жазып тұрады, Streamlit батырмасы оны оқиды
-
         // ---- Textarea оқиғалары ----
         essay.addEventListener('input', () => {{
             const words = essay.value.trim() ? essay.value.trim().split(/ +/).length : 0;
@@ -361,7 +311,6 @@ def writing_component(student_name: str, session_id: str):
             logEvent('paste');
         }});
 
-        // ---- Blur/visibility ----
         document.addEventListener('visibilitychange', () => {{
             if (document.hidden) onBlur();
             else onFocus();
@@ -369,10 +318,7 @@ def writing_component(student_name: str, session_id: str):
         window.addEventListener('blur', onBlur);
         window.addEventListener('focus', onFocus);
 
-        // ---- 5 сек autosave ----
         setInterval(saveDraft, 5000);
-
-
     }})();
     </script>
     """
@@ -405,17 +351,20 @@ if student_name.strip() and uploaded_file is not None:
         st.session_state[session_key] = datetime.now().strftime("%Y%m%d%H%M%S")
     session_id = st.session_state[session_key]
 
-    annul_key  = f"annulled_{session_id}"
-    done_key   = f"done_{session_id}"
-    if annul_key not in st.session_state: st.session_state[annul_key] = False
-    if done_key  not in st.session_state: st.session_state[done_key]  = False
+    annul_key      = f"annulled_{session_id}"
+    done_key       = f"done_{session_id}"
+    submitting_key = f"submitting_{session_id}"
 
-    # Аннулирленген болса тоқта
+    if annul_key      not in st.session_state: st.session_state[annul_key]      = False
+    if done_key       not in st.session_state: st.session_state[done_key]       = False
+    if submitting_key not in st.session_state: st.session_state[submitting_key] = False
+
+    # Аннулирленді ме?
     if st.session_state.get(annul_key, False):
         st.error("🚫 Жұмысыңыз аннулирленді. Мұғалімге хабарланды.")
         st.stop()
 
-    # Нәтиже көрсетілді ме
+    # Нәтиже бар ма?
     if st.session_state.get(done_key, False):
         result = st.session_state.get(f"result_{session_id}", {})
         if result:
@@ -435,42 +384,26 @@ if student_name.strip() and uploaded_file is not None:
             st.info(result["feedback"])
         st.stop()
 
-    # Жіберу режимі — JS компонентін жасырамыз
-    submitting_key = f"submitting_{session_id}"
-    if submitting_key not in st.session_state:
-        st.session_state[submitting_key] = False
-
-    if not st.session_state.get(submitting_key, False):
-        # JS компоненті — тек жазу кезінде көрінеді
-        st.subheader("3. Жауабыңызды жазыңыз")
-        st.caption("Жазуды бастағанда таймер автоматты қосылады. Уақыт: 20 минут.")
-        writing_component(student_name.strip(), session_id)
-
-        if st.button("✅ Тексеруге жіберу", type="primary", use_container_width=True,
-                     key=f"submit_btn_{session_id}"):
-            st.session_state[submitting_key] = True
-            st.rerun()
-
+    # Тексеру жүріп жатыр ма?
     if st.session_state.get(submitting_key, False):
         with st.spinner("⏳ Жұмысыңыз тексерілуде..."):
-            import time as _time
-            # Autosave жазылып болуын күтеміз (макс 8 сек)
+            # Supabase-тен мәтінді аламыз (макс 8 сек)
             draft = None
             for _ in range(4):
                 draft = get_latest_draft(session_id)
                 if draft and draft.get("draft_text","").strip():
                     break
                 _time.sleep(2)
-            essay_text = draft.get("draft_text", "").strip() if draft else ""
+
+            essay_text = draft.get("draft_text","").strip() if draft else ""
 
             if not essay_text:
                 st.session_state[submitting_key] = False
                 st.error("Жауап табылмады. Жазып болғаннан кейін бірнеше секунд күтіп жіберіңіз!")
                 st.rerun()
             else:
-                # Retry логикасы — rate limit қатесінде қайталайды
                 MAX_RETRIES = 5
-                RETRY_DELAYS = [5, 10, 20, 30, 60]  # сек
+                RETRY_DELAYS = [5, 10, 20, 30, 60]
 
                 genai.configure(api_key=st.secrets["gemini"]["api_key"])
                 model = genai.GenerativeModel(
@@ -505,8 +438,8 @@ Return ONLY valid JSON, no extra text:
                 for attempt in range(MAX_RETRIES):
                     try:
                         if attempt > 0:
-                            wait = RETRY_DELAYS[min(attempt - 1, len(RETRY_DELAYS) - 1)]
-                            st.info(f"⏳ Кезек күтілуде... {wait} секунд ({attempt}/{MAX_RETRIES})")
+                            wait = RETRY_DELAYS[min(attempt-1, len(RETRY_DELAYS)-1)]
+                            st.info(f"⏳ Кезек күтілуде... {wait} сек ({attempt}/{MAX_RETRIES})")
                             _time.sleep(wait)
 
                         result = json.loads(
@@ -514,27 +447,36 @@ Return ONLY valid JSON, no extra text:
                         save_result(student_name.strip(), result, session_id)
                         st.session_state[f"result_{session_id}"] = result
                         st.session_state[done_key] = True
+                        st.session_state[submitting_key] = False
                         st.rerun()
                         break
 
                     except Exception as e:
                         last_error = str(e)
-                        err_lower = last_error.lower()
-                        # Rate limit қатесі болса — retry
-                        if any(x in err_lower for x in ["429", "quota", "rate", "resource_exhausted"]):
+                        if any(x in last_error.lower() for x in ["429","quota","rate","resource_exhausted"]):
                             if attempt < MAX_RETRIES - 1:
                                 continue
-                        # Басқа қате болса — бірден тоқта
                         else:
                             break
 
                 if not st.session_state.get(done_key, False):
                     st.session_state[submitting_key] = False
-                    if last_error and any(x in last_error.lower() for x in ["429", "quota", "rate", "resource_exhausted"]):
-                        st.error("⏳ Жүйе қазір бос емес — тым көп сұраныс. 1-2 минуттан кейін қайталаңыз.")
+                    if last_error and any(x in last_error.lower() for x in ["429","quota","rate"]):
+                        st.error("⏳ Жүйе қазір бос емес. 1-2 минуттан кейін қайталаңыз.")
                     elif last_error:
                         st.error(f"Қате шықты: {last_error}")
                     st.rerun()
+
+    else:
+        # Жазу беті
+        st.subheader("3. Жауабыңызды жазыңыз")
+        st.caption("Жазуды бастағанда таймер автоматты қосылады. Уақыт: 20 минут.")
+        writing_component(student_name.strip(), session_id)
+
+        if st.button("✅ Тексеруге жіберу", type="primary",
+                     use_container_width=True, key=f"submit_{session_id}"):
+            st.session_state[submitting_key] = True
+            st.rerun()
 
 elif not student_name.strip():
     st.info("Алдымен аты-жөніңізді және тапсырма суретін жүктеңіз.")
