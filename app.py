@@ -104,19 +104,17 @@ def writing_component(student_name: str, session_id: str):
         <span id="ac-text">Античит белсенді — жұмысты адал орындаңыз</span>
     </div>
     <textarea id="essay-box" placeholder="Жауабыңызды осында теріңіз..."></textarea>
-    <div id="bottom-bar">
-        <span id="word-count">0 сөз</span>
-        <span id="save-status"></span>
+    <div id="bottom-bar" style="display:flex;justify-content:space-between;align-items:center;margin-top:6px;margin-bottom:4px;">
+        <span id="word-count" style="font-size:12px;font-weight:500;color:#A32D2D;">0 сөз</span>
+        <div style="display:flex;align-items:center;gap:8px;">
+            <span id="save-status" style="font-size:11px;color:#aaa;"></span>
+            <button id="show-teacher-btn" onclick="sendToTeacher()" style="
+                padding:5px 12px; background:transparent;
+                border:1px solid #ddd; border-radius:6px;
+                font-size:12px; color:#555; cursor:pointer;
+            ">👁 Айнұр ұстазға көрсету</button>
+        </div>
     </div>
-    <button id="show-teacher-btn" onclick="sendToTeacher()" style="
-        width:100%; margin-top:8px; padding:10px;
-        background:transparent; border:1px solid #ddd;
-        border-radius:8px; font-size:13px; color:#555;
-        cursor:pointer; transition:all 0.2s;
-    " onmouseover="this.style.background='#f5f5f5'"
-      onmouseout="this.style.background='transparent'">
-        👁 Мұғалімге көрсету
-    </button>
 
     <script>
     (function() {{
@@ -203,7 +201,7 @@ def writing_component(student_name: str, session_id: str):
                     alarmOsc.onended = () => {{ if (alarmCtx) playTone(); }};
                 }}
                 playTone();
-                setTimeout(() => stopAlarm(), 15000);
+                setTimeout(() => stopAlarm(), 3000);
             }} catch(e) {{}}
         }}
 
@@ -279,9 +277,12 @@ def writing_component(student_name: str, session_id: str):
         }}
 
         // ---- Мұғалімге жіберу ----
+        let teacherBtnActive = false;
         async function sendToTeacher() {{
             const text = essay.value.trim();
             if (!text) {{ alert('Алдымен мәтін жазыңыз!'); return; }}
+            teacherBtnActive = true;
+            setTimeout(() => {{ teacherBtnActive = false; }}, 2000);
             const wc = text.split(/ +/).length;
             const now = new Date().toISOString();
             const btn = document.getElementById('show-teacher-btn');
@@ -309,14 +310,14 @@ def writing_component(student_name: str, session_id: str):
                 saveEl.textContent = 'Жіберілді: ' + new Date().toLocaleTimeString();
                 setTimeout(() => {{
                     btn.disabled = false;
-                    btn.textContent = '👁 Мұғалімге көрсету';
+                    btn.textContent = '👁 Айнұр ұстазға көрсету';
                     btn.style.background = '';
                     btn.style.color = '';
                     btn.style.borderColor = '';
                 }}, 3000);
             }} catch(e) {{
                 btn.disabled = false;
-                btn.textContent = '👁 Мұғалімге көрсету';
+                btn.textContent = '👁 Айнұр ұстазға көрсету';
                 alert('Қате шықты, қайталап көріңіз.');
             }}
         }}
@@ -338,10 +339,18 @@ def writing_component(student_name: str, session_id: str):
         }});
 
         document.addEventListener('visibilitychange', () => {{
-            if (document.hidden) onBlur();
-            else onFocus();
+            if (document.hidden) {{
+                if (teacherBtnActive) return;
+                onBlur();
+            }} else onFocus();
         }});
-        window.addEventListener('blur', onBlur);
+        window.addEventListener('blur', () => {{
+            setTimeout(() => {{
+                if (teacherBtnActive) return;
+                if (document.activeElement && document.activeElement.tagName === 'BUTTON') return;
+                onBlur();
+            }}, 100);
+        }});
         window.addEventListener('focus', onFocus);
 
     }})();
