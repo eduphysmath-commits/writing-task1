@@ -66,8 +66,12 @@ tab1, tab2, tab3, tab4 = st.tabs([
 # ТАБ 1: LIVE МОНИТОРИНГ
 # ==========================================
 with tab1:
+    col_live1, col_live2 = st.columns([5, 1])
+    with col_live2:
+        if st.button("🔄", key="live_refresh", help="Жаңарту"):
+            st.rerun()
     drafts = get_live_drafts()
-    st.caption(f"Қазір жазып жатыр: {len(drafts)} оқушы · 5 сек сайын жаңарады")
+    st.caption(f"Қазір жазып жатыр: {len(drafts)} оқушы")
     st.markdown("---")
 
     if not drafts:
@@ -114,14 +118,7 @@ with tab1:
                 else:
                     st.caption("Әлі мәтін жоқ...")
 
-    # JS арқылы авто-жаңарту (тек Live қойындысы ашық болса)
-    components.html("""
-    <script>
-    setTimeout(function() {
-        window.parent.location.reload();
-    }, 8000);
-    </script>
-    """, height=0)
+
 
 # ==========================================
 # ТАБ 2: АНТИЧИТ
