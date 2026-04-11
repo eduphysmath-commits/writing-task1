@@ -29,6 +29,7 @@ def save_result(student_name: str, result: dict, session_id: str):
             "gra": result["GRA"],
             "main_errors": result["main_errors"],
             "feedback": result["feedback"],
+            "task_type": "Task 2",
         }).execute()
         get_supabase().table("live_drafts")\
             .delete().eq("session_id", session_id).execute()
@@ -401,6 +402,50 @@ if student_name.strip() and task_question.strip():
             for e in result.get("main_errors", []): st.warning(f"• {e}")
             st.subheader("📝 Пікір")
             st.markdown(result.get("feedback", ""))
+
+            # Мәтінді көшіру батырмасы
+            st.markdown("---")
+            essay_saved = st.session_state.get(f"essay_text_{session_id}", "")
+            if essay_saved:
+                st.subheader("📋 Жазған мәтініңіз")
+                st.text_area("", value=essay_saved, height=200,
+                             disabled=True, label_visibility="collapsed",
+                             key="saved_essay_display2")
+                copy_html = f"""
+                <button id="copy-btn" onclick="copyText()" style="
+                    padding:10px 20px; background:#1E88E5; color:white;
+                    border:none; border-radius:8px; font-size:14px;
+                    cursor:pointer; width:100%; margin-top:4px;
+                ">📋 Мәтінді көшіру</button>
+                <script>
+                function copyText() {{
+                    const text = {json.dumps(essay_saved)};
+                    navigator.clipboard.writeText(text).then(() => {{
+                        document.getElementById('copy-btn').textContent = '✅ Көшірілді!';
+                        document.getElementById('copy-btn').style.background = '#639922';
+                        setTimeout(() => {{
+                            document.getElementById('copy-btn').textContent = '📋 Мәтінді көшіру';
+                            document.getElementById('copy-btn').style.background = '#1E88E5';
+                        }}, 3000);
+                    }}).catch(() => {{
+                        const ta = document.createElement('textarea');
+                        ta.value = text;
+                        document.body.appendChild(ta);
+                        ta.select();
+                        document.execCommand('copy');
+                        document.body.removeChild(ta);
+                        document.getElementById('copy-btn').textContent = '✅ Көшірілді!';
+                        document.getElementById('copy-btn').style.background = '#639922';
+                        setTimeout(() => {{
+                            document.getElementById('copy-btn').textContent = '📋 Мәтінді көшіру';
+                            document.getElementById('copy-btn').style.background = '#1E88E5';
+                        }}, 3000);
+                    }});
+                }}
+                </script>
+                """
+                import streamlit.components.v1 as _components
+                _components.html(copy_html, height=60)
         st.stop()
 
     if st.session_state.get(submitting_key, False):
@@ -507,6 +552,7 @@ The essay topic/prompt given to the student was:
 
                         save_result(student_name.strip(), result, session_id)
                         st.session_state[f"result_{session_id}"] = result
+                        st.session_state[f"essay_text_{session_id}"] = essay_text
                         st.session_state[done_key] = True
                         st.session_state[submitting_key] = False
                         st.rerun()
