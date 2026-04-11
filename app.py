@@ -470,12 +470,11 @@ if student_name.strip() and uploaded_file is not None:
                 genai.configure(api_key=st.secrets["gemini"]["api_key"])
                 model = genai.GenerativeModel(
                     'gemini-2.5-flash',
-                    generation_config=genai.GenerationConfig(
-                        response_mime_type="application/json",
-                        max_output_tokens=8000,
-                        temperature=0,
-                        thinking_config={"thinking_budget": 1024}
-                    )
+                    generation_config={
+                        "response_mime_type": "application/json",
+                        "max_output_tokens": 8000,
+                        "temperature": 0,
+                    }
                 )
                 word_count = len(essay_text.split())
                 prompt = f"""You are a strict IELTS examiner. Evaluate the student's Task 1 report based on the image provided.
