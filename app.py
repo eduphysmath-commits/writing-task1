@@ -448,28 +448,37 @@ if student_name.strip() and uploaded_file is not None:
 
     if st.session_state.get(submitting_key, False):
         with st.spinner("⏳ Жұмысыңыз тексерілуде..."):
-            # Supabase-тен соңғы draft мәтінін аламыз
-            draft = get_latest_draft(session_id)
+            import time as _time
+            # Autosave жазылып болуын күтеміз (макс 8 сек)
+            draft = None
+            for _ in range(4):
+                draft = get_latest_draft(session_id)
+                if draft and draft.get("draft_text","").strip():
+                    break
+                _time.sleep(2)
             essay_text = draft.get("draft_text", "").strip() if draft else ""
 
             if not essay_text:
                 st.session_state[submitting_key] = False
-                st.error("Жауап табылмады. Алдымен мәтін жазыңыз (кемінде 5 секунд жазыңыз)!")
+                st.error("Жауап табылмады. Жазып болғаннан кейін бірнеше секунд күтіп жіберіңіз!")
                 st.rerun()
             else:
-                try:
-                    genai.configure(api_key=st.secrets["gemini"]["api_key"])
-                    model = genai.GenerativeModel(
-                        'gemini-2.5-flash',
-                        generation_config=genai.GenerationConfig(
-                            response_mime_type="application/json",
-                            max_output_tokens=8000,
-                            temperature=0,
-                            thinking_config={"thinking_budget": 1024}
-                        )
+                # Retry логикасы — rate limit қатесінде қайталайды
+                MAX_RETRIES = 5
+                RETRY_DELAYS = [5, 10, 20, 30, 60]  # сек
+
+                genai.configure(api_key=st.secrets["gemini"]["api_key"])
+                model = genai.GenerativeModel(
+                    'gemini-2.5-flash',
+                    generation_config=genai.GenerationConfig(
+                        response_mime_type="application/json",
+                        max_output_tokens=8000,
+                        temperature=0,
+                        thinking_config={"thinking_budget": 1024}
                     )
-                    word_count = len(essay_text.split())
-                    prompt = f"""You are a strict IELTS examiner. Evaluate the student's Task 1 report based on the image provided.
+                )
+                word_count = len(essay_text.split())
+                prompt = f"""You are a strict IELTS examiner. Evaluate the student's Task 1 report based on the image provided.
 
 CRITICAL RULES — NEVER IGNORE:
 1. Word count of this response: {word_count} words.
@@ -487,15 +496,40 @@ Return ONLY valid JSON, no extra text:
 {{"overall":0.0,"TA":0.0,"CC":0.0,"LR":0.0,"GRA":0.0,
 "main_errors":["Қате 1...","Қате 2..."],
 "feedback":"Қазақ тіліндегі пікір..."}}"""
-                    result = json.loads(
-                        model.generate_content([prompt, image, essay_text]).text)
-                    save_result(student_name.strip(), result, session_id)
-                    st.session_state[f"result_{session_id}"] = result
-                    st.session_state[done_key] = True
-                    st.rerun()
-                except Exception as e:
+
+                last_error = None
+                for attempt in range(MAX_RETRIES):
+                    try:
+                        if attempt > 0:
+                            wait = RETRY_DELAYS[min(attempt - 1, len(RETRY_DELAYS) - 1)]
+                            st.info(f"⏳ Кезек күтілуде... {wait} секунд ({attempt}/{MAX_RETRIES})")
+                            _time.sleep(wait)
+
+                        result = json.loads(
+                            model.generate_content([prompt, image, essay_text]).text)
+                        save_result(student_name.strip(), result, session_id)
+                        st.session_state[f"result_{session_id}"] = result
+                        st.session_state[done_key] = True
+                        st.rerun()
+                        break
+
+                    except Exception as e:
+                        last_error = str(e)
+                        err_lower = last_error.lower()
+                        # Rate limit қатесі болса — retry
+                        if any(x in err_lower for x in ["429", "quota", "rate", "resource_exhausted"]):
+                            if attempt < MAX_RETRIES - 1:
+                                continue
+                        # Басқа қате болса — бірден тоқта
+                        else:
+                            break
+
+                if not st.session_state.get(done_key, False):
                     st.session_state[submitting_key] = False
-                    st.error(f"Қате шықты: {e}")
+                    if last_error and any(x in last_error.lower() for x in ["429", "quota", "rate", "resource_exhausted"]):
+                        st.error("⏳ Жүйе қазір бос емес — тым көп сұраныс. 1-2 минуттан кейін қайталаңыз.")
+                    elif last_error:
+                        st.error(f"Қате шықты: {last_error}")
                     st.rerun()
 
 elif not student_name.strip():
