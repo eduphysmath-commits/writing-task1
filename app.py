@@ -354,13 +354,13 @@ def writing_component(student_name: str, session_id: str):
 
         document.addEventListener('visibilitychange', () => {{
             if (document.hidden) {{
-                if (teacherBtnActive) return;
+                if (teacherBtnActive || submitting) return;
                 onBlur();
             }} else onFocus();
         }});
         window.addEventListener('blur', () => {{
             setTimeout(() => {{
-                if (teacherBtnActive) return;
+                if (teacherBtnActive || submitting) return;
                 if (document.activeElement && document.activeElement.tagName === 'BUTTON') return;
                 onBlur();
             }}, 100);
@@ -466,31 +466,33 @@ if student_name.strip() and uploaded_file is not None:
                     }
                 )
                 word_count = len(essay_text.split())
-                prompt = f"""You are an expert IELTS Writing Examiner. Evaluate the student's Academic Task 1 report based on the provided image.
-
-WORD COUNT: {word_count} words.
-SCORING RULES:
-- Under 50 words → Overall MUST be 1.0-2.0
-- 50-100 words → Overall MUST be 2.0-3.5
-- 100-149 words → Overall MUST be 3.5-4.5
-- 150-179 words → slight penalty on TA
-- 180+ words → evaluate normally
-- Scores in exact 0.5 increments only.
-- Overall = exact average of TA, CC, LR, GRA.
-
-Your task is to provide a highly detailed, structured, and constructive evaluation IN KAZAKH.
-Base your feedback strictly on the student's actual text. Quote specific words or sentences they used.
-Maintain an objective, professional, yet encouraging tone.
-
-Return ONLY valid JSON (no markdown outside JSON):
+                prompt = f"""You are an expert and strict IELTS Writing Examiner. Evaluate the student's IELTS Academic Task 1 report based on the provided image.
+CRITICAL RULES & SCORING PENALTIES (NEVER IGNORE):
+The student's response is exactly {word_count} words long. Apply the following scoring rules based on length:
+- Under 50 words: Maximum Overall Score is 2.5.
+- 50 to 99 words: Maximum Overall Score is 4.5.
+- 100 to 139 words: Maximum Overall Score is 6.5. Deduct up to 1.0 band from Task Achievement (TA) because short essays usually lack key details. However, evaluate CC, LR, and GRA completely normally based on the actual quality of the text written. Do not artificially lower them.
+- 140+ words: Evaluate normally. Do not apply any length penalties.
+GRADING CRITERIA:
+1. Score each category (TA, CC, LR, GRA) using exact 0.5 increments only (e.g., 5.0, 5.5, 6.0).
+2. Calculate the 'overall' score as the exact mathematical average of TA, CC, LR, and GRA. Round down to the nearest 0.5 if necessary.
+LANGUAGE & FEEDBACK REQUIREMENT:
+The 'main_errors' array and 'feedback' string MUST be written entirely in natural, professional, and grammatically correct Kazakh language.
+Base your feedback strictly on the student's actual text. You MUST quote specific words or sentences the student used to prove your points.
+OUTPUT FORMAT:
+Return ONLY a valid JSON object. Do not include markdown formatting like ```json, do not include explanations, and do not write any text outside the JSON structure.
+Use this exact JSON structure:
 {{
   "overall": 0.0,
   "TA": 0.0,
   "CC": 0.0,
   "LR": 0.0,
   "GRA": 0.0,
-  "main_errors": ["Қате 1...", "Қате 2..."],
-  "feedback": "### 1. Task Achievement (Тапсырманың орындалуы): **[Score]**\n* [comment]\n\n### 2. Coherence and Cohesion (Логика және байланыс): **[Score]**\n* [comment]\n* **Ұсыныс:** [advice]\n\n### 3. Lexical Resource (Сөздік қор): **[Score]**\n* [comment]\n\n### 4. Grammatical Range and Accuracy (Грамматика): **[Score]**\n* [comment]\n\n---\n### Қалай жақсартуға болады?\n1. **[Кеңес 1]:** [advice]\n2. **[Кеңес 2]:** [advice]\n\n**Қорытынды:** [summary]"
+  "main_errors": [
+    "Бірінші нақты қате...",
+    "Екінші нақты қате..."
+  ],
+  "feedback": "### 1. Task Achievement (Тапсырманың орындалуы): **[Score]**\n* [1-2 sentences explaining what key features were covered]\n* [1 sentence evaluating their Overview]\n\n### 2. Coherence and Cohesion (Логика және байланыс): **[Score]**\n* [Comment on paragraphing and logical flow]\n* [Quote and evaluate the linking words used]\n* **Ұсыныс:** [Actionable advice]\n\n### 3. Lexical Resource (Сөздік қор): **[Score]**\n* [Quote specific good vocabulary used]\n* [Point out precise errors in collocations or word choice]\n\n### 4. Grammatical Range and Accuracy (Грамматика): **[Score]**\n* [Comment on sentence structures]\n* [Point out specific grammatical errors]\n\n---\n### Қалай жақсартуға болады? (Tips for [Overall + 0.5]+)\n1. **[Specific Tip 1]:** [Actionable advice based on their mistakes]\n2. **[Specific Tip 2]:** [Actionable advice]\n\n**Қорытынды:** [Brief encouraging summary]"
 }}"""
 
                 last_error = None
