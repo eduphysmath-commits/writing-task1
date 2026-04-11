@@ -1,6 +1,7 @@
 import streamlit as st
-import streamlit.components.v1 as components
+from datetime import datetime
 from supabase import create_client, Client
+import pandas as pd
 
 st.set_page_config(page_title="TEN: Мұғалім мониторы", page_icon="🛡", layout="wide")
 
@@ -8,6 +9,7 @@ st.markdown("""
 <style>
     [data-testid="stSidebar"] { display: none; }
     [data-testid="collapsedControl"] { display: none; }
+    .block-container { padding-top: 1.5rem !important; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -20,8 +22,7 @@ def get_anticheat_data():
         res = get_supabase().table("anticheat_events")\
             .select("*").order("created_at", desc=True).limit(200).execute()
         return res.data or []
-    except Exception as e:
-        st.error(f"Қате: {e}")
+    except:
         return []
 
 def get_results_data():
@@ -29,8 +30,7 @@ def get_results_data():
         res = get_supabase().table("results")\
             .select("*").order("checked_at", desc=True).limit(200).execute()
         return res.data or []
-    except Exception as e:
-        st.error(f"Қате: {e}")
+    except:
         return []
 
 def get_live_drafts():
@@ -38,146 +38,208 @@ def get_live_drafts():
         res = get_supabase().table("live_drafts")\
             .select("*").order("updated_at", desc=True).execute()
         return res.data or []
-    except Exception as e:
-        st.error(f"Қате: {e}")
+    except:
         return []
 
+# Session state
+for key, val in [
+    ("live_drafts_cache", []),
+    ("live_last_updated", "—"),
+    ("ac_cache", []),
+    ("results_cache", []),
+]:
+    if key not in st.session_state:
+        st.session_state[key] = val
+
 # ==========================================
-# МҰҒАЛІМ МОНИТОРЫ
+# HEADER
 # ==========================================
-col_title, col_refresh = st.columns([6, 1])
-with col_title:
-    st.title("🛡 Мұғалім мониторы")
-with col_refresh:
-    st.markdown("<div style='margin-top:16px'></div>", unsafe_allow_html=True)
+col_h1, col_h2 = st.columns([6, 1])
+with col_h1:
+    st.markdown("<h1 style='font-size:22px;font-weight:500;margin:0 0 4px;'>Мұғалім мониторы</h1>",
+                unsafe_allow_html=True)
+with col_h2:
     if st.button("🔄 Жаңарту", use_container_width=True):
+        st.session_state["live_drafts_cache"] = get_live_drafts()
+        st.session_state["ac_cache"] = get_anticheat_data()
+        st.session_state["results_cache"] = get_results_data()
+        st.session_state["live_last_updated"] = datetime.now().strftime("%H:%M:%S")
         st.rerun()
 
-st.markdown("---")
+# ==========================================
+# МЕТРИКА КАРТОЧКАЛАРЫ
+# ==========================================
+drafts_all  = st.session_state["live_drafts_cache"]
+events_all  = st.session_state["ac_cache"]
+results_all = st.session_state["results_cache"]
 
+writing_count  = len(drafts_all)
+checked_count  = len(results_all)
+suspect_count  = len(set(
+    e.get("student_name") for e in events_all
+    if e.get("blur_count", 0) >= 2 or e.get("paste_count", 0) >= 1
+))
+annulled_count = len(set(
+    e.get("student_name") for e in events_all
+    if e.get("annulled", 0)
+))
+
+m1, m2, m3, m4 = st.columns(4)
+def metric_card(col, label, value, color=None):
+    color_style = f"color:{color};" if color else ""
+    col.markdown(f"""
+    <div style="background:var(--color-background-secondary);border-radius:8px;
+                padding:14px 12px;text-align:center;">
+        <p style="margin:0 0 4px;font-size:12px;color:var(--color-text-secondary);">{label}</p>
+        <p style="margin:0;font-size:24px;font-weight:500;{color_style}">{value}</p>
+    </div>
+    """, unsafe_allow_html=True)
+
+metric_card(m1, "Жазып жатыр", writing_count)
+metric_card(m2, "Тексерілді", checked_count)
+metric_card(m3, "Күдікті", suspect_count, "#A32D2D" if suspect_count else None)
+metric_card(m4, "Аннулирленді", annulled_count, "#A32D2D" if annulled_count else None)
+
+st.markdown("<div style='height:16px'></div>", unsafe_allow_html=True)
+
+# ==========================================
+# ҚОЙЫНДЫЛАР
+# ==========================================
 tab1, tab2, tab3, tab4 = st.tabs([
     "👁 Live мониторинг",
-    "🔴 Античит оқиғалары",
-    "📊 Тексеру нәтижелері",
+    "🔴 Античит",
+    "📊 Нәтижелер",
     "📈 Статистика"
 ])
 
 # ==========================================
-# ТАБ 1: LIVE МОНИТОРИНГ
+# ТАБ 1: LIVE
 # ==========================================
 with tab1:
-    col_live1, col_live2 = st.columns([5, 1])
-    with col_live2:
-        if st.button("🔄", key="live_refresh", help="Жаңарту"):
+    col_l1, col_l2 = st.columns([5, 1])
+    with col_l1:
+        st.caption(f"Соңғы жаңарту: {st.session_state['live_last_updated']} · {len(drafts_all)} оқушы жазып жатыр")
+    with col_l2:
+        if st.button("🔄", key="live_ref", help="Тек live жаңарту"):
+            st.session_state["live_drafts_cache"] = get_live_drafts()
+            st.session_state["live_last_updated"] = datetime.now().strftime("%H:%M:%S")
             st.rerun()
-    drafts = get_live_drafts()
-    st.caption(f"Қазір жазып жатыр: {len(drafts)} оқушы")
-    st.markdown("---")
 
-    if not drafts:
-        st.info("Қазір ешкім жазып жатқан жоқ.")
+    if not drafts_all:
+        st.markdown("""
+        <div style="text-align:center;padding:2rem;color:var(--color-text-secondary);font-size:14px;">
+            Жаңарту батырмасын басыңыз
+        </div>
+        """, unsafe_allow_html=True)
     else:
-        for d in drafts:
-            name = d.get("student_name", "—")
+        for d in drafts_all:
+            name       = d.get("student_name", "—")
             word_count = d.get("word_count", 0)
             draft_text = d.get("draft_text", "")
             updated_at = (d.get("updated_at","") or "")[:19].replace("T"," ")
+            progress   = min(word_count / 250, 1.0)
 
-            # Сөз санына қарай прогресс (250 сөз — IELTS Task 1 минимум)
-            progress = min(word_count / 250, 1.0)
             if word_count >= 250:
-                badge, p_color = "🟢", "#639922"
+                p_color, badge_bg, badge_color = "#639922", "#EAF3DE", "#3B6D11"
             elif word_count >= 150:
-                badge, p_color = "🟡", "#EF9F27"
+                p_color, badge_bg, badge_color = "#EF9F27", "#FAEEDA", "#854F0B"
             else:
-                badge, p_color = "🔴", "#E24B4A"
+                p_color, badge_bg, badge_color = "#E24B4A", "#FCEBEB", "#A32D2D"
 
-            with st.expander(f"{badge} {name} · {word_count} сөз · Жаңартылды: {updated_at}"):
-                # Прогресс жолағы
-                st.markdown(f"""
-                <div style="margin-bottom:10px;">
-                    <div style="display:flex;justify-content:space-between;font-size:12px;color:#888;margin-bottom:4px;">
-                        <span>Сөз саны: <b style="color:{p_color}">{word_count}</b></span>
-                        <span>Минимум: 250 сөз</span>
-                    </div>
-                    <div style="background:#f0f0f0;border-radius:6px;height:8px;overflow:hidden;">
-                        <div style="width:{int(progress*100)}%;height:100%;background:{p_color};border-radius:6px;transition:width 0.5s;"></div>
+            st.markdown(f"""
+            <div style="background:var(--color-background-primary);
+                        border:0.5px solid var(--color-border-tertiary);
+                        border-radius:12px;padding:12px 16px;margin-bottom:10px;">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+                    <span style="font-size:14px;font-weight:500;color:var(--color-text-primary);">{name}</span>
+                    <div style="display:flex;align-items:center;gap:8px;">
+                        <span style="font-size:11px;background:{badge_bg};color:{badge_color};
+                                     padding:2px 10px;border-radius:20px;">{word_count} сөз</span>
+                        <span style="font-size:11px;color:var(--color-text-secondary);">{updated_at}</span>
                     </div>
                 </div>
-                """, unsafe_allow_html=True)
+                <div style="background:var(--color-background-secondary);border-radius:4px;height:5px;overflow:hidden;">
+                    <div style="width:{int(progress*100)}%;height:100%;background:{p_color};border-radius:4px;"></div>
+                </div>
+                <div style="display:flex;justify-content:space-between;font-size:11px;
+                            color:var(--color-text-secondary);margin-top:4px;">
+                    <span style="color:{p_color};font-weight:500;">{int(progress*100)}%</span>
+                    <span>Минимум: 250 сөз</span>
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
 
-                # Мәтін
-                if draft_text.strip():
-                    st.text_area(
-                        "Жазылып жатқан мәтін:",
-                        value=draft_text,
-                        height=200,
-                        disabled=True,
-                        key=f"draft_{d.get('session_id','')}"
-                    )
-                else:
-                    st.caption("Әлі мәтін жоқ...")
-
-
+            if draft_text.strip():
+                with st.expander("Мәтінді көру"):
+                    st.text_area("", value=draft_text, height=180, disabled=True,
+                                 key=f"dt_{d.get('session_id','')}", label_visibility="collapsed")
 
 # ==========================================
 # ТАБ 2: АНТИЧИТ
 # ==========================================
 with tab2:
-    events = get_anticheat_data()
-    if not events:
-        st.info("Әлі оқиға жоқ.")
+    events = st.session_state["ac_cache"]
+    clean  = [e for e in events if e.get("event_type") not in ("autosave","start","timer_start")]
+
+    if not clean:
+        st.info("Жаңарту батырмасын басыңыз немесе оқиға жоқ.")
     else:
-        col_f1, col_f2 = st.columns([2, 2])
+        col_f1, col_f2 = st.columns(2)
         with col_f1:
-            names = sorted(set(e.get("student_name","") for e in events))
-            selected_name = st.selectbox("Оқушы:", ["Барлығы"] + names)
+            names = sorted(set(e.get("student_name","") for e in clean))
+            sel_name = st.selectbox("Оқушы:", ["Барлығы"] + names)
         with col_f2:
-            event_types = sorted(set(e.get("event_type","") for e in events))
-            selected_type = st.selectbox("Оқиға:", ["Барлығы"] + event_types)
+            etypes = sorted(set(e.get("event_type","") for e in clean))
+            sel_type = st.selectbox("Оқиға:", ["Барлығы"] + etypes)
 
-        filtered = events
-        if selected_name != "Барлығы":
-            filtered = [e for e in filtered if e.get("student_name") == selected_name]
-        if selected_type != "Барлығы":
-            filtered = [e for e in filtered if e.get("event_type") == selected_type]
-
-        # autosave оқиғаларын жасыру (тым көп болады)
-        filtered = [e for e in filtered if e.get("event_type") != "autosave"]
+        filtered = clean
+        if sel_name != "Барлығы":
+            filtered = [e for e in filtered if e.get("student_name") == sel_name]
+        if sel_type != "Барлығы":
+            filtered = [e for e in filtered if e.get("event_type") == sel_type]
 
         st.caption(f"Барлығы: {len(filtered)} оқиға")
-        st.markdown("---")
+        st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
 
         for ev in filtered:
-            name = ev.get("student_name", "—")
+            name       = ev.get("student_name", "—")
             event_type = ev.get("event_type", "—")
-            blur = ev.get("blur_count", 0)
-            paste = ev.get("paste_count", 0)
-            annulled = ev.get("annulled", 0)
+            blur       = ev.get("blur_count", 0)
+            paste      = ev.get("paste_count", 0)
+            annulled   = ev.get("annulled", 0)
             created_at = (ev.get("created_at","") or "")[:16]
 
             if annulled:
-                bg, border, color, icon, label = "#F09595","#E24B4A","#501313","🚫","АННУЛИРЛЕНДІ"
+                bg, border, color, label = "#F09595","#E24B4A","#501313","АННУЛИРЛЕНДІ"
+                badge_bg, badge_color = "#E24B4A", "#FCEBEB"
             elif blur >= 2 or paste >= 1:
-                bg, border, color, icon, label = "#FAEEDA","#EF9F27","#854F0B","⚠️","КҮДІКТІ"
+                bg, border, color, label = "#FAEEDA","#EF9F27","#854F0B","КҮДІКТІ"
+                badge_bg, badge_color = "#EF9F27", "#FAEEDA"
             elif event_type == "blur_1":
-                bg, border, color, icon, label = "#FCEBEB","#E24B4A","#A32D2D","🔴","ЕСКЕРТУ"
+                bg, border, color, label = "#FCEBEB","#E24B4A","#A32D2D","ЕСКЕРТУ"
+                badge_bg, badge_color = "#E24B4A", "#FCEBEB"
             elif event_type == "timer_expired":
-                bg, border, color, icon, label = "#E6F1FB","#378ADD","#042C53","⏰","УАҚЫТ БІТТІ"
-            elif event_type == "timer_warning":
-                bg, border, color, icon, label = "#FAEEDA","#EF9F27","#854F0B","⏱","1 МИН ҚАЛДЫ"
-            elif event_type in ("start","timer_start"):
-                bg, border, color, icon, label = "#EAF3DE","#639922","#27500A","✅","БАСТАДЫ"
+                bg, border, color, label = "#E6F1FB","#378ADD","#042C53","УАҚЫТ БІТТІ"
+                badge_bg, badge_color = "#378ADD", "#E6F1FB"
             else:
-                bg, border, color, icon, label = "#EAF3DE","#639922","#27500A","✅", event_type
+                bg, border, color, label = "#EAF3DE","#639922","#27500A", event_type
+                badge_bg, badge_color = "#639922", "#EAF3DE"
 
             st.markdown(f"""
             <div style="background:{bg};border-left:4px solid {border};color:{color};
-                border-radius:6px;padding:10px 16px;margin-bottom:6px;font-size:13px;">
-                <b>{icon} {name}</b> &nbsp;·&nbsp; <b>{label}</b>
-                &nbsp;·&nbsp; Blur: <b>{blur}</b>
-                &nbsp;·&nbsp; Paste: <b>{paste}</b>
-                &nbsp;·&nbsp; <span style="opacity:0.7;font-size:12px">{created_at}</span>
+                border-radius:0 8px 8px 0;padding:10px 16px;margin-bottom:6px;
+                display:flex;justify-content:space-between;align-items:center;">
+                <div>
+                    <span style="font-size:13px;font-weight:500;">{name}</span>
+                    <span style="font-size:12px;margin-left:8px;">
+                        Blur: <b>{blur}</b> · Paste: <b>{paste}</b>
+                    </span>
+                </div>
+                <div style="display:flex;align-items:center;gap:8px;">
+                    <span style="font-size:11px;background:{badge_color};color:{badge_bg};
+                                 padding:2px 10px;border-radius:20px;font-weight:500;">{label}</span>
+                    <span style="font-size:11px;opacity:0.6;">{created_at}</span>
+                </div>
             </div>
             """, unsafe_allow_html=True)
 
@@ -185,34 +247,61 @@ with tab2:
 # ТАБ 3: НӘТИЖЕЛЕР
 # ==========================================
 with tab3:
-    results = get_results_data()
+    results = st.session_state["results_cache"]
     if not results:
-        st.info("Әлі нәтиже жоқ.")
+        st.info("Жаңарту батырмасын басыңыз немесе нәтиже жоқ.")
     else:
-        names_r = sorted(set(r.get("student_name","") for r in results))
-        selected_r = st.selectbox("Оқушы:", ["Барлығы"] + names_r, key="res_filter")
-        filtered_r = results if selected_r == "Барлығы" else \
-            [r for r in results if r.get("student_name") == selected_r]
+        names_r  = sorted(set(r.get("student_name","") for r in results))
+        sel_r    = st.selectbox("Оқушы:", ["Барлығы"] + names_r, key="res_filter")
+        filtered_r = results if sel_r == "Барлығы" else \
+            [r for r in results if r.get("student_name") == sel_r]
 
         st.caption(f"Барлығы: {len(filtered_r)} нәтиже")
-        st.markdown("---")
+        st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
 
         for r in filtered_r:
-            name = r.get("student_name","—")
-            overall = r.get("overall","—")
-            ta = r.get("ta","—"); cc = r.get("cc","—")
-            lr = r.get("lr","—"); gra = r.get("gra","—")
+            name       = r.get("student_name","—")
+            overall    = r.get("overall","—")
+            ta         = r.get("ta","—")
+            cc         = r.get("cc","—")
+            lr         = r.get("lr","—")
+            gra        = r.get("gra","—")
             checked_at = (r.get("checked_at","") or "")[:16]
 
             try:
                 ov = float(overall)
-                badge = "🟢" if ov >= 7.0 else "🟡" if ov >= 6.0 else "🔴"
-            except: badge = "⚪"
+                if ov >= 7.0:   ov_color, ov_bg = "#27500A", "#EAF3DE"
+                elif ov >= 6.0: ov_color, ov_bg = "#854F0B", "#FAEEDA"
+                else:           ov_color, ov_bg = "#A32D2D", "#FCEBEB"
+            except:
+                ov_color, ov_bg = "#3C3489", "#EEEDFE"
 
-            with st.expander(f"{badge} {name} · Overall: {overall} · {checked_at}"):
-                c1, c2, c3, c4 = st.columns(4)
-                c1.metric("TA", ta); c2.metric("CC", cc)
-                c3.metric("LR", lr); c4.metric("GRA", gra)
+            with st.expander(f"{name} · Overall: {overall} · {checked_at}"):
+                st.markdown(f"""
+                <div style="display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px;margin-bottom:12px;">
+                    <div style="background:{ov_bg};border-radius:8px;padding:12px;text-align:center;">
+                        <p style="margin:0 0 2px;font-size:11px;color:{ov_color};">Overall</p>
+                        <p style="margin:0;font-size:22px;font-weight:500;color:{ov_color};">{overall}</p>
+                    </div>
+                    <div style="background:var(--color-background-secondary);border-radius:8px;padding:12px;text-align:center;">
+                        <p style="margin:0 0 2px;font-size:11px;color:var(--color-text-secondary);">TA</p>
+                        <p style="margin:0;font-size:22px;font-weight:500;color:var(--color-text-primary);">{ta}</p>
+                    </div>
+                    <div style="background:var(--color-background-secondary);border-radius:8px;padding:12px;text-align:center;">
+                        <p style="margin:0 0 2px;font-size:11px;color:var(--color-text-secondary);">CC</p>
+                        <p style="margin:0;font-size:22px;font-weight:500;color:var(--color-text-primary);">{cc}</p>
+                    </div>
+                    <div style="background:var(--color-background-secondary);border-radius:8px;padding:12px;text-align:center;">
+                        <p style="margin:0 0 2px;font-size:11px;color:var(--color-text-secondary);">LR</p>
+                        <p style="margin:0;font-size:22px;font-weight:500;color:var(--color-text-primary);">{lr}</p>
+                    </div>
+                    <div style="background:var(--color-background-secondary);border-radius:8px;padding:12px;text-align:center;">
+                        <p style="margin:0 0 2px;font-size:11px;color:var(--color-text-secondary);">GRA</p>
+                        <p style="margin:0;font-size:22px;font-weight:500;color:var(--color-text-primary);">{gra}</p>
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+
                 errors = r.get("main_errors", [])
                 if errors:
                     st.markdown("**Қателер:**")
@@ -225,24 +314,34 @@ with tab3:
 # ТАБ 4: СТАТИСТИКА
 # ==========================================
 with tab4:
-    results_all = get_results_data()
-    events_all = get_anticheat_data()
-
     if not results_all:
-        st.info("Статистика үшін деректер жоқ.")
+        st.info("Жаңарту батырмасын басыңыз немесе деректер жоқ.")
     else:
-        total_students = len(set(r.get("student_name","") for r in results_all))
-        total_results = len(results_all)
-        annulled_count = sum(1 for e in events_all if e.get("annulled", 0))
-        avg_overall = round(sum(r.get("overall",0) for r in results_all) / len(results_all), 2)
+        total_st  = len(set(r.get("student_name","") for r in results_all))
+        total_res = len(results_all)
+        avg_ov    = round(sum(r.get("overall",0) for r in results_all) / len(results_all), 1)
 
-        col1, col2, col3, col4 = st.columns(4)
-        col1.metric("Оқушылар саны", total_students)
-        col2.metric("Тексерулер саны", total_results)
-        col3.metric("Орташа балл", avg_overall)
-        col4.metric("Аннулирленген", annulled_count)
+        st.markdown(f"""
+        <div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin-bottom:1.5rem;">
+            <div style="background:var(--color-background-secondary);border-radius:8px;padding:14px;text-align:center;">
+                <p style="margin:0 0 4px;font-size:12px;color:var(--color-text-secondary);">Оқушылар</p>
+                <p style="margin:0;font-size:24px;font-weight:500;color:var(--color-text-primary);">{total_st}</p>
+            </div>
+            <div style="background:var(--color-background-secondary);border-radius:8px;padding:14px;text-align:center;">
+                <p style="margin:0 0 4px;font-size:12px;color:var(--color-text-secondary);">Тексерулер</p>
+                <p style="margin:0;font-size:24px;font-weight:500;color:var(--color-text-primary);">{total_res}</p>
+            </div>
+            <div style="background:var(--color-background-secondary);border-radius:8px;padding:14px;text-align:center;">
+                <p style="margin:0 0 4px;font-size:12px;color:var(--color-text-secondary);">Орташа балл</p>
+                <p style="margin:0;font-size:24px;font-weight:500;color:var(--color-text-primary);">{avg_ov}</p>
+            </div>
+            <div style="background:var(--color-background-secondary);border-radius:8px;padding:14px;text-align:center;">
+                <p style="margin:0 0 4px;font-size:12px;color:var(--color-text-secondary);">Аннулирленді</p>
+                <p style="margin:0;font-size:24px;font-weight:500;color:{'#A32D2D' if annulled_count else 'var(--color-text-primary)'};">{annulled_count}</p>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
 
-        st.markdown("---")
         st.subheader("Оқушы бойынша орташа баллдар")
 
         student_stats = {}
@@ -260,12 +359,11 @@ with tab4:
             rows.append({
                 "Оқушы": name,
                 "Overall": round(sum(vals["overall"])/len(vals["overall"]),1) if vals["overall"] else "—",
-                "TA": round(sum(vals["ta"])/len(vals["ta"]),1) if vals["ta"] else "—",
-                "CC": round(sum(vals["cc"])/len(vals["cc"]),1) if vals["cc"] else "—",
-                "LR": round(sum(vals["lr"])/len(vals["lr"]),1) if vals["lr"] else "—",
-                "GRA": round(sum(vals["gra"])/len(vals["gra"]),1) if vals["gra"] else "—",
+                "TA":      round(sum(vals["ta"])/len(vals["ta"]),1)      if vals["ta"]      else "—",
+                "CC":      round(sum(vals["cc"])/len(vals["cc"]),1)      if vals["cc"]      else "—",
+                "LR":      round(sum(vals["lr"])/len(vals["lr"]),1)      if vals["lr"]      else "—",
+                "GRA":     round(sum(vals["gra"])/len(vals["gra"]),1)    if vals["gra"]     else "—",
                 "Тексеру саны": len(vals["overall"]),
             })
 
-        import pandas as pd
         st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
