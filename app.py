@@ -459,16 +459,34 @@ if student_name.strip() and uploaded_file is not None:
             else:
                 try:
                     genai.configure(api_key=st.secrets["gemini"]["api_key"])
-                    model = genai.GenerativeModel('gemini-2.5-flash',
-                        generation_config={"response_mime_type": "application/json"})
-                    prompt = """Act as an expert IELTS examiner. Look at the provided image and read the student's Task 1 report.
-Evaluate based on official 9-band IELTS descriptors. Scores in 0.5 increments.
-Criteria: TA, CC, LR, GRA. Calculate Overall as exact average.
-Write 'main_errors' and 'feedback' IN KAZAKH LANGUAGE. Friendly, encouraging tone.
-Return ONLY valid JSON:
-{"overall":6.5,"TA":6.0,"CC":6.5,"LR":7.0,"GRA":6.5,
+                    model = genai.GenerativeModel(
+                        'gemini-2.5-flash',
+                        generation_config=genai.GenerationConfig(
+                            response_mime_type="application/json",
+                            max_output_tokens=8000,
+                            temperature=0,
+                            thinking_config={"thinking_budget": 1024}
+                        )
+                    )
+                    word_count = len(essay_text.split())
+                    prompt = f"""You are a strict IELTS examiner. Evaluate the student's Task 1 report based on the image provided.
+
+CRITICAL RULES — NEVER IGNORE:
+1. Word count of this response: {word_count} words.
+   - Under 50 words → Overall MUST be 1.0-2.0
+   - 50-100 words → Overall MUST be 2.0-3.5
+   - 100-149 words → Overall MUST be 3.5-4.5 (penalize heavily for length)
+   - 150-179 words → slight penalty on TA
+   - 180+ words → evaluate normally
+2. Score in exact 0.5 increments only.
+3. Calculate Overall as exact average of TA, CC, LR, GRA.
+4. DO NOT give high scores for incomplete or very short responses.
+5. Write 'main_errors' and 'feedback' IN KAZAKH LANGUAGE. Be honest and direct about length issues.
+
+Return ONLY valid JSON, no extra text:
+{{"overall":0.0,"TA":0.0,"CC":0.0,"LR":0.0,"GRA":0.0,
 "main_errors":["Қате 1...","Қате 2..."],
-"feedback":"Қазақ тіліндегі пікір..."}"""
+"feedback":"Қазақ тіліндегі пікір..."}}"""
                     result = json.loads(
                         model.generate_content([prompt, image, essay_text]).text)
                     save_result(student_name.strip(), result, session_id)
