@@ -267,7 +267,6 @@ def writing_component(student_name: str, session_id: str):
                     alarmOsc = alarmCtx.createOscillator();
                     alarmOsc.connect(alarmGain);
                     alarmOsc.type = 'square';
-                    // Жиілік ауысып тұрады — назар аудартады
                     alarmOsc.frequency.setValueAtTime(880, alarmCtx.currentTime);
                     alarmOsc.frequency.setValueAtTime(660, alarmCtx.currentTime + 0.3);
                     alarmOsc.frequency.setValueAtTime(880, alarmCtx.currentTime + 0.6);
@@ -278,6 +277,9 @@ def writing_component(student_name: str, session_id: str):
                     }};
                 }}
                 playTone();
+
+                // 15 секундтан кейін автоматты тоқтайды
+                setTimeout(() => stopAlarm(), 15000);
             }} catch(e) {{}}
         }}
 
@@ -310,6 +312,11 @@ def writing_component(student_name: str, session_id: str):
         function onFocus() {{
             stopAlarm();
         }}
+
+        // Страница жасырылғанда (submit болғанда) дыбыс тоқтайды
+        document.addEventListener('visibilitychange', () => {{
+            if (!document.hidden) stopAlarm();
+        }});
 
         // ---- Autosave (5 сек) ----
         async function saveDraft() {{
@@ -367,6 +374,10 @@ def writing_component(student_name: str, session_id: str):
 
         // ---- 5 сек autosave ----
         setInterval(saveDraft, 5000);
+
+        // Бет жабылғанда немесе iframe жойылғанда дыбыс тоқтайды
+        window.addEventListener('beforeunload', stopAlarm);
+        window.addEventListener('pagehide', stopAlarm);
 
     }})();
     </script>
