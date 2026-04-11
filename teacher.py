@@ -1,6 +1,6 @@
 import streamlit as st
+import streamlit.components.v1 as components
 from supabase import create_client, Client
-import time
 
 st.set_page_config(page_title="TEN: Мұғалім мониторы", page_icon="🛡", layout="wide")
 
@@ -114,9 +114,14 @@ with tab1:
                 else:
                     st.caption("Әлі мәтін жоқ...")
 
-    # 5 сек сайын авто-жаңарту
-    time.sleep(5)
-    st.rerun()
+    # JS арқылы авто-жаңарту (тек Live қойындысы ашық болса)
+    components.html("""
+    <script>
+    setTimeout(function() {
+        window.parent.location.reload();
+    }, 8000);
+    </script>
+    """, height=0)
 
 # ==========================================
 # ТАБ 2: АНТИЧИТ
