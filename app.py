@@ -108,7 +108,7 @@ def writing_component(student_name: str, session_id: str):
         <span id="word-count" style="font-size:12px;font-weight:500;color:#A32D2D;">0 сөз</span>
         <div style="display:flex;align-items:center;gap:8px;">
             <span id="save-status" style="font-size:11px;color:#aaa;"></span>
-            <button id="show-teacher-btn" onclick="sendToTeacher()" style="
+            <button id="show-teacher-btn" style="
                 padding:5px 12px; background:transparent;
                 border:1px solid #ddd; border-radius:6px;
                 font-size:12px; color:#555; cursor:pointer;
@@ -289,19 +289,32 @@ def writing_component(student_name: str, session_id: str):
             btn.disabled = true;
             btn.textContent = 'Жіберілуде...';
             try {{
+                console.log('SB_URL:', SB_URL);
+                console.log('SB_KEY длина:', SB_KEY ? SB_KEY.length : 'БОС');
+                console.log('Text длина:', text.length);
+                console.log('draftInserted:', draftInserted);
+
+                let fetchRes;
                 if (!draftInserted) {{
-                    const res = await fetch(SB_URL + '/rest/v1/live_drafts', {{
+                    fetchRes = await fetch(SB_URL + '/rest/v1/live_drafts', {{
                         method: 'POST', headers: HEADERS,
                         body: JSON.stringify({{
                             student_name: STUDENT, session_id: SESSION,
                             draft_text: text, word_count: wc, submitted: 0
                         }})
                     }});
-                    if (res.ok || res.status === 201) draftInserted = true;
+                    console.log('POST статус:', fetchRes.status);
+                    if (fetchRes.ok || fetchRes.status === 201) draftInserted = true;
+                    else {{
+                        const errText = await fetchRes.text();
+                        console.error('POST қате:', errText);
+                    }}
                 }} else {{
-                    await sbPatch('live_drafts', 'session_id=eq.' + SESSION, {{
-                        draft_text: text, word_count: wc, updated_at: now
+                    fetchRes = await fetch(SB_URL + '/rest/v1/live_drafts?session_id=eq.' + SESSION, {{
+                        method: 'PATCH', headers: HEADERS,
+                        body: JSON.stringify({{ draft_text: text, word_count: wc, updated_at: now }})
                     }});
+                    console.log('PATCH статус:', fetchRes.status);
                 }}
                 btn.textContent = '✅ Мұғалімге жіберілді';
                 btn.style.background = '#EAF3DE';
@@ -316,9 +329,10 @@ def writing_component(student_name: str, session_id: str):
                     btn.style.borderColor = '';
                 }}, 3000);
             }} catch(e) {{
+                console.error('sendToTeacher қате:', e);
                 btn.disabled = false;
                 btn.textContent = '👁 Айнұр ұстазға көрсету';
-                alert('Қате шықты, қайталап көріңіз.');
+                alert('Қате: ' + e.message);
             }}
         }}
 
@@ -352,6 +366,9 @@ def writing_component(student_name: str, session_id: str):
             }}, 100);
         }});
         window.addEventListener('focus', onFocus);
+
+        // Батырмаға addEventListener арқылы тіркейміз
+        document.getElementById('show-teacher-btn').addEventListener('click', sendToTeacher);
 
     }})();
     </script>
