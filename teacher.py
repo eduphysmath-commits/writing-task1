@@ -285,7 +285,10 @@ with tab3:
             except:
                 ov_color, ov_bg = "#3C3489", "#EEEDFE"
 
-            with st.expander(f"{name} · Overall: {overall} · {checked_at}"):
+            task_type = r.get("task_type", "Task 1")
+            t_badge = "🔵" if task_type == "Task 2" else "🟣"
+            with st.expander(f"{t_badge} {task_type} · {name} · Overall: {overall} · {checked_at}"):
+                ta_label = "TR" if r.get("task_type") == "Task 2" else "TA"
                 st.markdown(f"""
                 <div style="display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px;margin-bottom:12px;">
                     <div style="background:{ov_bg};border-radius:8px;padding:12px;text-align:center;">
@@ -293,7 +296,7 @@ with tab3:
                         <p style="margin:0;font-size:22px;font-weight:500;color:{ov_color};">{overall}</p>
                     </div>
                     <div style="background:var(--color-background-secondary);border-radius:8px;padding:12px;text-align:center;">
-                        <p style="margin:0 0 2px;font-size:11px;color:var(--color-text-secondary);">TA</p>
+                        <p style="margin:0 0 2px;font-size:11px;color:var(--color-text-secondary);">{{ta_label}}</p>
                         <p style="margin:0;font-size:22px;font-weight:500;color:var(--color-text-primary);">{ta}</p>
                     </div>
                     <div style="background:var(--color-background-secondary);border-radius:8px;padding:12px;text-align:center;">
