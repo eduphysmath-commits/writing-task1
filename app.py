@@ -42,29 +42,6 @@ def save_anticheat(student_name, session_id, event_type, blur_count, paste_count
     except:
         pass
 
-def upsert_live_draft(student_name: str, session_id: str, draft_text: str):
-    try:
-        word_count = len(draft_text.split()) if draft_text.strip() else 0
-        sb = get_supabase()
-        # Бар жазба бар ма тексеру
-        res = sb.table("live_drafts")\
-            .select("id")\
-            .eq("session_id", session_id)\
-            .execute()
-        if res.data:
-            sb.table("live_drafts")\
-                .update({"draft_text": draft_text, "word_count": word_count,
-                         "updated_at": datetime.utcnow().isoformat()})\
-                .eq("session_id", session_id)\
-                .execute()
-        else:
-            sb.table("live_drafts").insert({
-                "student_name": student_name, "session_id": session_id,
-                "draft_text": draft_text, "word_count": word_count,
-            }).execute()
-    except:
-        pass
-
 def delete_live_draft(session_id: str):
     try:
         get_supabase().table("live_drafts")\
@@ -72,134 +49,314 @@ def delete_live_draft(session_id: str):
     except:
         pass
 
-def anticheat_timer_component(student_name: str, session_id: str):
+def writing_component(student_name: str, session_id: str):
+    """
+    Textarea + Античит + Таймер + Live autosave — бәрі бір JS компонентінде.
+    Streamlit-ке мәтінді submit батырмасы басылғанда ғана жібереді.
+    """
     sb_url = st.secrets["supabase"]["url"]
     sb_key = st.secrets["supabase"]["key"]
+
     html = f"""
     <style>
+        * {{ box-sizing: border-box; margin: 0; padding: 0; font-family: sans-serif; }}
+
         #timer-box {{
-            position:fixed; top:16px; right:16px; z-index:9999;
-            background:#EAF3DE; border:1.5px solid #639922; border-radius:12px;
-            padding:10px 18px; text-align:center; min-width:100px;
-            transition:background 0.5s,border-color 0.5s;
+            position: fixed; top: 16px; right: 16px; z-index: 9999;
+            background: #EAF3DE; border: 1.5px solid #639922;
+            border-radius: 12px; padding: 10px 18px;
+            text-align: center; min-width: 100px;
+            transition: background 0.5s, border-color 0.5s;
         }}
-        #timer-label {{ font-size:11px; color:#3B6D11; text-transform:uppercase; margin-bottom:2px; }}
-        #timer-display {{ font-size:26px; font-weight:600; color:#27500A; letter-spacing:1px; }}
-        #timer-box.yellow {{ background:#FAEEDA; border-color:#EF9F27; }}
-        #timer-box.yellow #timer-label {{ color:#854F0B; }}
-        #timer-box.yellow #timer-display {{ color:#633806; }}
-        #timer-box.red {{ background:#FCEBEB; border-color:#E24B4A; }}
-        #timer-box.red #timer-label {{ color:#A32D2D; }}
-        #timer-box.red #timer-display {{ color:#501313; }}
-        #timer-box.done {{ background:#F09595; border-color:#E24B4A; animation:pulse 1s ease-in-out infinite; }}
-        @keyframes pulse {{ 0%,100%{{transform:scale(1)}} 50%{{transform:scale(1.04)}} }}
+        #timer-label {{ font-size: 11px; color: #3B6D11; text-transform: uppercase; margin-bottom: 2px; }}
+        #timer-display {{ font-size: 26px; font-weight: 600; color: #27500A; letter-spacing: 1px; }}
+        #timer-box.yellow {{ background: #FAEEDA; border-color: #EF9F27; }}
+        #timer-box.yellow #timer-label {{ color: #854F0B; }}
+        #timer-box.yellow #timer-display {{ color: #633806; }}
+        #timer-box.red {{ background: #FCEBEB; border-color: #E24B4A; }}
+        #timer-box.red #timer-label {{ color: #A32D2D; }}
+        #timer-box.red #timer-display {{ color: #501313; }}
+        #timer-box.done {{ background: #F09595; border-color: #E24B4A; animation: pulse 1s ease-in-out infinite; }}
+        @keyframes pulse {{ 0%,100% {{ transform: scale(1); }} 50% {{ transform: scale(1.04); }} }}
+
         #ac-bar {{
-            padding:10px 16px; border-radius:8px; background:#EAF3DE;
-            border-left:4px solid #639922; font-size:13px; color:#3B6D11;
-            display:flex; align-items:center; gap:8px; transition:all 0.3s;
+            padding: 10px 16px; border-radius: 8px; margin-bottom: 10px;
+            background: #EAF3DE; border-left: 4px solid #639922;
+            font-size: 13px; color: #3B6D11;
+            display: flex; align-items: center; gap: 8px; transition: all 0.3s;
         }}
-        .ac-dot {{ width:10px; height:10px; border-radius:50%; background:#639922; flex-shrink:0; }}
+        .ac-dot {{ width: 10px; height: 10px; border-radius: 50%; background: #639922; flex-shrink: 0; }}
+
+        #essay-box {{
+            width: 100%; height: 300px;
+            border: 1px solid #ddd; border-radius: 8px;
+            padding: 12px; font-size: 15px; line-height: 1.6;
+            resize: vertical; outline: none;
+            transition: border-color 0.3s;
+            font-family: sans-serif;
+            color: #333;
+        }}
+        #essay-box:focus {{ border-color: #639922; }}
+        #essay-box:disabled {{ background: #f5f5f5; color: #888; cursor: not-allowed; }}
+
+        #word-bar {{
+            display: flex; justify-content: space-between;
+            font-size: 12px; color: #888; margin-top: 6px; margin-bottom: 10px;
+        }}
+        #word-count {{ font-weight: 500; }}
+
+        #submit-btn {{
+            width: 100%; padding: 12px;
+            background: #1E88E5; color: white;
+            border: none; border-radius: 8px;
+            font-size: 15px; font-weight: 500;
+            cursor: pointer; transition: background 0.2s;
+        }}
+        #submit-btn:hover {{ background: #1565C0; }}
+        #submit-btn:disabled {{ background: #aaa; cursor: not-allowed; }}
+        #submit-btn.expired {{ animation: btnPulse 1s ease-in-out infinite; background: #E24B4A; }}
+        @keyframes btnPulse {{ 0%,100% {{ opacity: 1; }} 50% {{ opacity: 0.75; }} }}
+
+        #save-status {{ font-size: 11px; color: #aaa; text-align: right; margin-top: 4px; }}
     </style>
-    <div id="timer-box"><div id="timer-label">Уақыт</div><div id="timer-display">20:00</div></div>
-    <div id="ac-bar"><div class="ac-dot" id="ac-dot"></div><span id="ac-text">Античит белсенді — жұмысты адал орындаңыз</span></div>
+
+    <!-- Таймер (оң жақ бұрышта) -->
+    <div id="timer-box">
+        <div id="timer-label">Уақыт</div>
+        <div id="timer-display">20:00</div>
+    </div>
+
+    <!-- Античит статус -->
+    <div id="ac-bar">
+        <div class="ac-dot" id="ac-dot"></div>
+        <span id="ac-text">Античит белсенді — жұмысты адал орындаңыз</span>
+    </div>
+
+    <!-- Жазу аймағы -->
+    <textarea id="essay-box" placeholder="Жауабыңызды осында теріңіз..."></textarea>
+
+    <!-- Сөз санауышы -->
+    <div id="word-bar">
+        <span id="word-count">0 сөз</span>
+        <span>Минимум: 150 сөз · Ұсынылады: 250+</span>
+    </div>
+
+    <!-- Автосақтау статусы -->
+    <div id="save-status">Сақталмаған</div>
+
+    <!-- Жіберу батырмасы -->
+    <button id="submit-btn" onclick="submitEssay()">✅ Тексеруге жіберу</button>
+
     <script>
-    (function(){{
-        const STUDENT="{student_name}", SESSION="{session_id}", TOTAL=1200;
-        let blur=0,paste=0,annulled=false,started=false,left=TOTAL,interval=null,expired=false;
-        const tBox=document.getElementById('timer-box'), tDisp=document.getElementById('timer-display');
-        const dot=document.getElementById('ac-dot'), txt=document.getElementById('ac-text');
-        const bar=document.getElementById('ac-bar');
+    (function() {{
+        const STUDENT = "{student_name}";
+        const SESSION = "{session_id}";
+        const SB_URL  = "{sb_url}";
+        const SB_KEY  = "{sb_key}";
+        const TOTAL   = 1200;
 
-        function beep(f=880,d=0.4,t='square'){{
-            try{{const c=new(window.AudioContext||window.webkitAudioContext)();
-            const o=c.createOscillator(),g=c.createGain();
-            o.connect(g);g.connect(c.destination);o.type=t;o.frequency.value=f;
-            g.gain.setValueAtTime(0.3,c.currentTime);
-            g.gain.exponentialRampToValueAtTime(0.001,c.currentTime+d);
-            o.start(c.currentTime);o.stop(c.currentTime+d);}}catch(e){{}}
-        }}
-        function alarm(){{beep(440,0.3,'sawtooth');setTimeout(()=>beep(440,0.3,'sawtooth'),400);setTimeout(()=>beep(440,0.3,'sawtooth'),800);}}
-        function send(ev){{window.parent.postMessage({{type:'streamlit:setComponentValue',
-            value:{{student:STUDENT,session:SESSION,event_type:ev,blur_count:blur,
-                    paste_count:paste,annulled:annulled?1:0,timer_expired:expired?1:0}}}},  '*');}}
-        function status(msg,bg,bc,c,dc){{
-            bar.style.background=bg;bar.style.borderColor=bc;bar.style.color=c;dot.style.background=dc;txt.textContent=msg;
-        }}
-        function doAnnul(){{
-            annulled=true;if(interval)clearInterval(interval);
-            beep(300,1.5,'sawtooth');
-            status('ЖҰМЫС АННУЛИРЛЕНДІ — мұғалімге хабарланды','#F09595','#E24B4A','#501313','#E24B4A');
-            tBox.className='done';tDisp.textContent='XXX';send('annulled');
-        }}
-        function fmt(s){{return String(Math.floor(s/60)).padStart(2,'0')+':'+String(s%60).padStart(2,'0');}}
-        function startTimer(){{
-            if(started)return;started=true;send('timer_start');
-            interval=setInterval(()=>{{
-                if(annulled){{clearInterval(interval);return;}}
-                left--;tDisp.textContent=fmt(left);
-                tBox.className=left<=0?'done':left<=60?'red':left<=300?'yellow':'';
-                if(left===60){{beep(660,0.5);status('1 минут қалды!','#FAEEDA','#EF9F27','#854F0B','#EF9F27');send('timer_warning');}}
-                if(left<=0){{clearInterval(interval);expired=true;tDisp.textContent='00:00';
-                    alarm();status('Уақыт бітті! Жұмысыңызды жіберіңіз.','#FCEBEB','#E24B4A','#A32D2D','#E24B4A');send('timer_expired');}}
-            }},1000);
-        }}
-        function onBlur(){{
-            if(annulled||expired)return;blur++;
-            if(blur===1){{beep(660,0.5);status('Ескерту! Басқа бетке өтпеңіз! (1/3)','#FAEEDA','#EF9F27','#854F0B','#EF9F27');send('blur_1');}}
-            else if(blur===2){{beep(440,0.7);status('ҚАТАҢ ЕСКЕРТУ! Тағы бір рет шықсаңыз аннулирленеді! (2/3)','#FCEBEB','#E24B4A','#A32D2D','#E24B4A');send('blur_2');}}
-            else doAnnul();
-        }}
-        document.addEventListener('visibilitychange',()=>{{if(document.hidden)onBlur();}});
-        window.addEventListener('blur',onBlur);
-        document.addEventListener('paste',()=>{{if(annulled)return;paste++;beep(550,0.3);status('Ескерту! Мәтін қою анықталды!','#FAEEDA','#EF9F27','#854F0B','#EF9F27');send('paste');}});
-        document.addEventListener('keydown',(e)=>{{if(!started&&!annulled&&e.key&&e.key.length===1)startTimer();}});
-
-        // 5 секунд сайын тікелей Supabase-ке жіберу
-        const SB_URL = '{sb_url}';
-        const SB_KEY = '{sb_key}';
+        let blur = 0, paste = 0, annulled = false;
+        let started = false, left = TOTAL, timerInterval = null, expired = false;
         let draftInserted = false;
 
+        const tBox  = document.getElementById('timer-box');
+        const tDisp = document.getElementById('timer-display');
+        const dot   = document.getElementById('ac-dot');
+        const txt   = document.getElementById('ac-text');
+        const bar   = document.getElementById('ac-bar');
+        const essay = document.getElementById('essay-box');
+        const wc    = document.getElementById('word-count');
+        const saveStatus = document.getElementById('save-status');
+        const btn   = document.getElementById('submit-btn');
+
+        // ---- Дыбыс ----
+        function beep(f=880, d=0.4, t='square') {{
+            try {{
+                const ctx = new (window.AudioContext || window.webkitAudioContext)();
+                const osc = ctx.createOscillator(), gain = ctx.createGain();
+                osc.connect(gain); gain.connect(ctx.destination);
+                osc.type = t; osc.frequency.value = f;
+                gain.gain.setValueAtTime(0.3, ctx.currentTime);
+                gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + d);
+                osc.start(ctx.currentTime); osc.stop(ctx.currentTime + d);
+            }} catch(e) {{}}
+        }}
+        function alarm() {{
+            beep(440, 0.3, 'sawtooth');
+            setTimeout(() => beep(440, 0.3, 'sawtooth'), 400);
+            setTimeout(() => beep(440, 0.3, 'sawtooth'), 800);
+        }}
+
+        // ---- Streamlit-ке жіберу (античит оқиғалары) ----
+        function send(ev) {{
+            window.parent.postMessage({{
+                type: 'streamlit:setComponentValue',
+                value: {{ student: STUDENT, session: SESSION, event_type: ev,
+                          blur_count: blur, paste_count: paste,
+                          annulled: annulled ? 1 : 0,
+                          timer_expired: expired ? 1 : 0,
+                          essay_text: '' }}
+            }}, '*');
+        }}
+
+        // ---- Статус жолағы ----
+        function setStatus(msg, bg, bc, c, dc) {{
+            bar.style.background = bg; bar.style.borderColor = bc;
+            bar.style.color = c; dot.style.background = dc;
+            txt.textContent = msg;
+        }}
+
+        // ---- Аннулирлеу ----
+        function doAnnul() {{
+            annulled = true;
+            if (timerInterval) clearInterval(timerInterval);
+            essay.disabled = true;
+            btn.disabled = true;
+            beep(300, 1.5, 'sawtooth');
+            setStatus('ЖҰМЫС АННУЛИРЛЕНДІ — мұғалімге хабарланды', '#F09595', '#E24B4A', '#501313', '#E24B4A');
+            tBox.className = 'done'; tDisp.textContent = 'XXX';
+            send('annulled');
+        }}
+
+        // ---- Таймер ----
+        function fmt(s) {{
+            return String(Math.floor(s / 60)).padStart(2, '0') + ':' + String(s % 60).padStart(2, '0');
+        }}
+
+        function startTimer() {{
+            if (started) return;
+            started = true;
+            send('timer_start');
+            timerInterval = setInterval(() => {{
+                if (annulled) {{ clearInterval(timerInterval); return; }}
+                left--;
+                tDisp.textContent = fmt(left);
+                tBox.className = left <= 0 ? 'done' : left <= 60 ? 'red' : left <= 300 ? 'yellow' : '';
+                if (left === 60) {{
+                    beep(660, 0.5);
+                    setStatus('1 минут қалды! Жұмысыңызды жіберуге дайындалыңыз.', '#FAEEDA', '#EF9F27', '#854F0B', '#EF9F27');
+                    send('timer_warning');
+                }}
+                if (left <= 0) {{
+                    clearInterval(timerInterval);
+                    expired = true;
+                    tDisp.textContent = '00:00';
+                    alarm();
+                    setStatus('Уақыт бітті! Жұмысыңызды жіберіңіз.', '#FCEBEB', '#E24B4A', '#A32D2D', '#E24B4A');
+                    btn.classList.add('expired');
+                    btn.textContent = '📤 Жіберу';
+                    send('timer_expired');
+                }}
+            }}, 1000);
+        }}
+
+        // ---- Беттен шығу ----
+        function onBlur() {{
+            if (annulled || expired) return;
+            blur++;
+            if (blur === 1) {{
+                beep(660, 0.5);
+                setStatus('Ескерту! Басқа бетке өтпеңіз! (1/3)', '#FAEEDA', '#EF9F27', '#854F0B', '#EF9F27');
+                send('blur_1');
+            }} else if (blur === 2) {{
+                beep(440, 0.7);
+                setStatus('ҚАТАҢ ЕСКЕРТУ! Тағы бір рет шықсаңыз аннулирленеді! (2/3)', '#FCEBEB', '#E24B4A', '#A32D2D', '#E24B4A');
+                send('blur_2');
+            }} else {{
+                doAnnul();
+            }}
+        }}
+
+        // ---- Supabase-ке тікелей сақтау ----
         async function saveDraft() {{
-            if(annulled) return;
-            const textarea = window.parent.document.querySelector('textarea');
-            const text = textarea ? textarea.value : '';
+            if (annulled) return;
+            const text = essay.value;
             const wordCount = text.trim() ? text.trim().split(/\s+/).length : 0;
             const now = new Date().toISOString();
             try {{
-                if(!draftInserted) {{
+                if (!draftInserted) {{
                     const res = await fetch(SB_URL + '/rest/v1/live_drafts', {{
                         method: 'POST',
                         headers: {{
-                            'apikey': SB_KEY, 'Authorization': 'Bearer ' + SB_KEY,
-                            'Content-Type': 'application/json', 'Prefer': 'return=minimal'
+                            'apikey': SB_KEY,
+                            'Authorization': 'Bearer ' + SB_KEY,
+                            'Content-Type': 'application/json',
+                            'Prefer': 'return=minimal'
                         }},
                         body: JSON.stringify({{
                             student_name: STUDENT, session_id: SESSION,
                             draft_text: text, word_count: wordCount
                         }})
                     }});
-                    if(res.ok || res.status === 201) draftInserted = true;
+                    if (res.ok || res.status === 201) {{
+                        draftInserted = true;
+                        saveStatus.textContent = 'Сақталды: ' + new Date().toLocaleTimeString();
+                    }}
                 }} else {{
                     await fetch(SB_URL + '/rest/v1/live_drafts?session_id=eq.' + SESSION, {{
                         method: 'PATCH',
                         headers: {{
-                            'apikey': SB_KEY, 'Authorization': 'Bearer ' + SB_KEY,
-                            'Content-Type': 'application/json', 'Prefer': 'return=minimal'
+                            'apikey': SB_KEY,
+                            'Authorization': 'Bearer ' + SB_KEY,
+                            'Content-Type': 'application/json',
+                            'Prefer': 'return=minimal'
                         }},
                         body: JSON.stringify({{
                             draft_text: text, word_count: wordCount, updated_at: now
                         }})
                     }});
+                    saveStatus.textContent = 'Сақталды: ' + new Date().toLocaleTimeString();
                 }}
-            }} catch(e) {{}}
+            }} catch(e) {{
+                saveStatus.textContent = 'Сақтауда қате';
+            }}
         }}
+
+        // ---- Жіберу ----
+        function submitEssay() {{
+            const text = essay.value.trim();
+            if (!text) {{ alert('Жауап мәтінін жазыңыз!'); return; }}
+            btn.disabled = true;
+            btn.textContent = 'Жіберілуде...';
+            window.parent.postMessage({{
+                type: 'streamlit:setComponentValue',
+                value: {{ student: STUDENT, session: SESSION,
+                          event_type: 'submit',
+                          blur_count: blur, paste_count: paste,
+                          annulled: 0, timer_expired: expired ? 1 : 0,
+                          essay_text: text }}
+            }}, '*');
+        }}
+
+        // ---- Сөз санауыш ----
+        essay.addEventListener('input', () => {{
+            const words = essay.value.trim() ? essay.value.trim().split(/\s+/).length : 0;
+            wc.textContent = words + ' сөз';
+            wc.style.color = words >= 250 ? '#3B6D11' : words >= 150 ? '#854F0B' : '#A32D2D';
+            if (!started && !annulled) startTimer();
+        }});
+
+        // ---- Paste ----
+        essay.addEventListener('paste', () => {{
+            if (annulled) return;
+            paste++;
+            beep(550, 0.3);
+            setStatus('Ескерту! Мәтін қою анықталды!', '#FAEEDA', '#EF9F27', '#854F0B', '#EF9F27');
+            send('paste');
+        }});
+
+        // ---- Blur/visibility ----
+        document.addEventListener('visibilitychange', () => {{ if (document.hidden) onBlur(); }});
+        window.addEventListener('blur', onBlur);
+
+        // ---- 5 сек автосақтау ----
         setInterval(saveDraft, 5000);
 
         send('start');
     }})();
     </script>
     """
-    return components.html(html, height=70)
+    return components.html(html, height=460)
 
 # ==========================================
 # ОҚУШЫ БЕТІ
@@ -231,48 +388,23 @@ if student_name.strip() and uploaded_file is not None:
         st.session_state[session_key] = datetime.now().strftime("%Y%m%d%H%M%S")
     session_id = st.session_state[session_key]
 
-    annul_key = f"annulled_{session_id}"
-    expired_key = f"expired_{session_id}"
-    if annul_key not in st.session_state: st.session_state[annul_key] = False
-    if expired_key not in st.session_state: st.session_state[expired_key] = False
+    annul_key   = f"annulled_{session_id}"
+    submit_key  = f"submitted_{session_id}"
+    essay_key   = f"essay_{session_id}"
 
-    ac_data = anticheat_timer_component(student_name.strip(), session_id)
+    if annul_key  not in st.session_state: st.session_state[annul_key]  = False
+    if submit_key not in st.session_state: st.session_state[submit_key] = False
+    if essay_key  not in st.session_state: st.session_state[essay_key]  = ""
 
-    if ac_data and isinstance(ac_data, dict):
-        ev = ac_data.get("event_type","")
-        if ev == "autosave":
-            draft_text = ac_data.get("draft_text", "")
-            upsert_live_draft(student_name.strip(), session_id, draft_text)
-        elif ev not in ("start",):
-            save_anticheat(student_name.strip(), session_id, ev,
-                           ac_data.get("blur_count",0), ac_data.get("paste_count",0),
-                           ac_data.get("annulled",0))
-        if ac_data.get("annulled",0): st.session_state[annul_key] = True
-        if ac_data.get("timer_expired",0): st.session_state[expired_key] = True
-
+    # Аннулирленген болса тоқта
     if st.session_state.get(annul_key, False):
         st.error("🚫 Жұмысыңыз аннулирленді. Мұғалімге хабарланды.")
         st.stop()
 
-    anticheat_active = True
-elif not student_name.strip():
-    st.info("Алдымен аты-жөніңізді және тапсырма суретін жүктеңіз.")
-
-essay_text = ""
-if anticheat_active:
-    timer_done = st.session_state.get(f"expired_{session_id}", False)
-    if timer_done:
-        st.warning("⏰ Уақыт бітті! Жұмысыңызды жіберіңіз.")
-
-    essay_text = st.text_area("", height=280,
-        placeholder="Жауабыңызды осында теріңіз...",
-        label_visibility="collapsed")
-
-    if st.button("📤 Жіберу" if timer_done else "✅ Тексеруге жіберу",
-                 type="primary", use_container_width=True):
-        if not essay_text.strip():
-            st.error("Жауап мәтінін жазыңыз!")
-        else:
+    # Жіберілген болса нәтижені көрсет
+    if st.session_state.get(submit_key, False):
+        essay_text = st.session_state.get(essay_key, "")
+        if essay_text:
             try:
                 genai.configure(api_key=st.secrets["gemini"]["api_key"])
                 model = genai.GenerativeModel('gemini-2.5-flash',
@@ -289,10 +421,13 @@ Return ONLY valid JSON:
                     result = json.loads(model.generate_content([prompt, image, essay_text]).text)
                     save_result(student_name.strip(), result)
                     delete_live_draft(session_id)
+
                 st.markdown("---")
                 st.success("✅ Жұмысыңыз сәтті тексерілді!")
-                st.markdown(f"<h2 style='text-align:center;color:#1E88E5;'>🏆 Overall Band: {result['overall']}</h2>", unsafe_allow_html=True)
-                c1,c2,c3,c4 = st.columns(4)
+                st.markdown(
+                    f"<h2 style='text-align:center;color:#1E88E5;'>🏆 Overall Band: {result['overall']}</h2>",
+                    unsafe_allow_html=True)
+                c1, c2, c3, c4 = st.columns(4)
                 c1.metric("Task Achievement", result["TA"])
                 c2.metric("Coherence", result["CC"])
                 c3.metric("Lexical", result["LR"])
@@ -304,3 +439,31 @@ Return ONLY valid JSON:
                 st.info(result["feedback"])
             except Exception as e:
                 st.error(f"Қате шықты: {e}")
+        st.stop()
+
+    # JS компоненті — textarea + античит + таймер + autosave
+    ac_data = writing_component(student_name.strip(), session_id)
+
+    if ac_data and isinstance(ac_data, dict):
+        ev = ac_data.get("event_type", "")
+
+        if ev == "submit":
+            # Оқушы жіберді — essay_text сақтап, нәтижені көрсет
+            st.session_state[essay_key]  = ac_data.get("essay_text", "")
+            st.session_state[submit_key] = True
+            save_anticheat(student_name.strip(), session_id, "submit",
+                           ac_data.get("blur_count", 0), ac_data.get("paste_count", 0), 0)
+            st.rerun()
+
+        elif ev == "annulled":
+            st.session_state[annul_key] = True
+            save_anticheat(student_name.strip(), session_id, "annulled",
+                           ac_data.get("blur_count", 0), ac_data.get("paste_count", 0), 1)
+            st.rerun()
+
+        elif ev not in ("start", ""):
+            save_anticheat(student_name.strip(), session_id, ev,
+                           ac_data.get("blur_count", 0), ac_data.get("paste_count", 0), 0)
+
+elif not student_name.strip():
+    st.info("Алдымен аты-жөніңізді және тапсырма суретін жүктеңіз.")
