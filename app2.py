@@ -3,6 +3,7 @@ import streamlit.components.v1 as components
 import google.generativeai as genai
 import json
 import time as _time
+import requests as _requests
 from datetime import datetime
 from supabase import create_client, Client
 
@@ -14,9 +15,56 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
+# ---- Supabase (тек results үшін) ----
 @st.cache_resource
 def get_supabase() -> Client:
     return create_client(st.secrets["supabase"]["url"], st.secrets["supabase"]["key"])
+
+# ---- Gemini (кэштелген) ----
+@st.cache_resource
+def get_gemini_model():
+    genai.configure(api_key=st.secrets["gemini"]["api_key"])
+    return genai.GenerativeModel(
+        'gemini-2.5-flash',
+        generation_config={
+            "response_mime_type": "application/json",
+            "max_output_tokens": 8000,
+            "temperature": 0,
+        }
+    )
+
+# ---- Redis (Upstash) helpers ----
+def _r_url():
+    return st.secrets["redis"]["url"]
+
+def _r_headers():
+    return {"Authorization": f"Bearer {st.secrets['redis']['token']}"}
+
+def redis_set_draft(session_id: str, data: dict):
+    try:
+        val = _requests.utils.quote(json.dumps(data, ensure_ascii=False), safe="")
+        _requests.get(f"{_r_url()}/setex/draft:{session_id}/7200/{val}",
+                      headers=_r_headers(), timeout=3)
+    except Exception:
+        pass
+
+def redis_get_draft(session_id: str):
+    try:
+        r = _requests.get(f"{_r_url()}/get/draft:{session_id}",
+                          headers=_r_headers(), timeout=3)
+        result = r.json().get("result")
+        if result:
+            return json.loads(result)
+    except Exception:
+        pass
+    return None
+
+def redis_del_draft(session_id: str):
+    try:
+        _requests.get(f"{_r_url()}/del/draft:{session_id}",
+                      headers=_r_headers(), timeout=3)
+    except Exception:
+        pass
 
 def save_result(student_name: str, result: dict, session_id: str):
     try:
@@ -31,24 +79,16 @@ def save_result(student_name: str, result: dict, session_id: str):
             "feedback": result["feedback"],
             "task_type": "Task 2",
         }).execute()
-        get_supabase().table("live_drafts")\
-            .delete().eq("session_id", session_id).execute()
+        redis_del_draft(session_id)
     except Exception as e:
         st.warning(f"Сақтауда қате: {e}")
 
 def get_latest_draft(session_id: str):
-    try:
-        res = get_supabase().table("live_drafts")\
-            .select("*").eq("session_id", session_id).execute()
-        if res.data:
-            return res.data[0]
-    except:
-        pass
-    return None
+    return redis_get_draft(session_id)
 
 def writing_component(student_name: str, session_id: str):
-    sb_url = st.secrets["supabase"]["url"]
-    sb_key = st.secrets["supabase"]["key"]
+    rd_url   = st.secrets["redis"]["url"]
+    rd_token = st.secrets["redis"]["token"]
 
     html = f"""
     <style>
@@ -120,15 +160,15 @@ def writing_component(student_name: str, session_id: str):
 
     <script>
     (function() {{
-        const STUDENT = "{student_name}";
-        const SESSION = "{session_id}";
-        const SB_URL  = '{sb_url}';
-        const SB_KEY  = '{sb_key}';
-        const TOTAL   = 2400;
+        const STUDENT   = "{student_name}";
+        const SESSION   = "{session_id}";
+        const RD_URL    = '{rd_url}';
+        const RD_TOKEN  = '{rd_token}';
+        const TOTAL     = 2400;
 
         let blur = 0, paste = 0, annulled = false;
         let started = false, left = TOTAL, timerInterval = null, expired = false;
-        let draftInserted = false, submitting = false;
+        let submitting = false;
         let alarmCtx = null, alarmOsc = null, alarmGain = null;
         let teacherBtnActive = false;
 
@@ -141,35 +181,47 @@ def writing_component(student_name: str, session_id: str):
         const wcEl   = document.getElementById('word-count');
         const saveEl = document.getElementById('save-status');
 
-        const HEADERS = {{
-            'apikey': SB_KEY, 'Authorization': 'Bearer ' + SB_KEY,
-            'Content-Type': 'application/json', 'Prefer': 'return=minimal'
+        const RD_HEADERS = {{
+            'Authorization': 'Bearer ' + RD_TOKEN,
+            'Content-Type': 'application/json'
         }};
 
-        async function sbPost(table, body) {{
+        async function redisSaveDraft(text, wc) {{
             try {{
-                await fetch(SB_URL + '/rest/v1/' + table, {{
-                    method: 'POST', headers: HEADERS, body: JSON.stringify(body)
+                const payload = JSON.stringify({{
+                    student_name: STUDENT,
+                    session_id: SESSION,
+                    draft_text: text,
+                    word_count: wc,
+                    submitted: 0,
+                    updated_at: new Date().toISOString()
+                }});
+                await fetch(RD_URL + '/setex/draft:' + SESSION + '/7200/' + encodeURIComponent(payload), {{
+                    headers: RD_HEADERS
                 }});
             }} catch(e) {{}}
         }}
 
-        async function sbPatch(table, filter, body) {{
+        async function redisLogAnticheat(ev) {{
             try {{
-                await fetch(SB_URL + '/rest/v1/' + table + '?' + filter, {{
-                    method: 'PATCH', headers: HEADERS, body: JSON.stringify(body)
+                const payload = JSON.stringify({{
+                    student_name: STUDENT,
+                    session_id: SESSION,
+                    event_type: ev,
+                    blur_count: blur,
+                    paste_count: paste,
+                    annulled: (ev === 'annulled') ? 1 : 0,
+                    created_at: new Date().toISOString()
+                }});
+                await fetch(RD_URL + '/setex/ac:' + SESSION + '/10800/' + encodeURIComponent(payload), {{
+                    headers: RD_HEADERS
                 }});
             }} catch(e) {{}}
         }}
 
         async function logEvent(ev) {{
             if (ev === 'start') return;
-            await sbPost('anticheat_events', {{
-                student_name: STUDENT, session_id: SESSION,
-                event_type: ev, blur_count: blur,
-                paste_count: paste,
-                annulled: (ev === 'annulled') ? 1 : 0
-            }});
+            await redisLogAnticheat(ev);
         }}
 
         function setStatus(msg, bg, bc, c, dc) {{
@@ -178,7 +230,6 @@ def writing_component(student_name: str, session_id: str):
             txt.textContent = msg;
         }}
 
-        // ---- Дыбыс (тек алғашқы 10 минутта) ----
         function startAlarm() {{
             if (left < TOTAL - 600) return;
             try {{
@@ -251,7 +302,7 @@ def writing_component(student_name: str, session_id: str):
         }}
 
         function onBlur() {{
-            if (annulled || expired || submitting) return;
+            if (annulled || expired) return;
             blur++;
             startAlarm();
             if (blur === 1) {{
@@ -269,36 +320,17 @@ def writing_component(student_name: str, session_id: str):
 
         function onFocus() {{ stopAlarm(); }}
 
-        // ---- Мұғалімге жіберу ----
         async function sendToTeacher() {{
             const text = essay.value.trim();
             if (!text) {{ alert('Алдымен мәтін жазыңыз!'); return; }}
             teacherBtnActive = true;
             setTimeout(() => {{ teacherBtnActive = false; }}, 2000);
             const wc = text.split(/ +/).length;
-            const now = new Date().toISOString();
             const btn = document.getElementById('show-teacher-btn');
             btn.disabled = true;
             btn.textContent = 'Жіберілуде...';
             try {{
-                if (!draftInserted) {{
-                    await fetch(SB_URL + '/rest/v1/live_drafts?session_id=eq.' + SESSION, {{
-                        method: 'DELETE', headers: HEADERS
-                    }});
-                    const res = await fetch(SB_URL + '/rest/v1/live_drafts', {{
-                        method: 'POST', headers: HEADERS,
-                        body: JSON.stringify({{
-                            student_name: STUDENT, session_id: SESSION,
-                            draft_text: text, word_count: wc, submitted: 0
-                        }})
-                    }});
-                    if (res.ok || res.status === 201) draftInserted = true;
-                }} else {{
-                    await fetch(SB_URL + '/rest/v1/live_drafts?session_id=eq.' + SESSION, {{
-                        method: 'PATCH', headers: HEADERS,
-                        body: JSON.stringify({{ draft_text: text, word_count: wc, updated_at: now }})
-                    }});
-                }}
+                await redisSaveDraft(text, wc);
                 btn.textContent = '✅ Жіберілді';
                 btn.style.background = '#EAF3DE';
                 btn.style.color = '#3B6D11';
@@ -317,11 +349,24 @@ def writing_component(student_name: str, session_id: str):
             }}
         }}
 
+        let autosaveTimer = null;
         essay.addEventListener('input', () => {{
             const words = essay.value.trim() ? essay.value.trim().split(/ +/).length : 0;
             wcEl.textContent = words + ' сөз';
             wcEl.style.color = words >= 250 ? '#3B6D11' : words >= 150 ? '#854F0B' : '#A32D2D';
             if (!started && !annulled) startTimer();
+
+            // Автосақтау: 5 секунд кейін (debounced)
+            if (autosaveTimer) clearTimeout(autosaveTimer);
+            autosaveTimer = setTimeout(async () => {{
+                if (annulled) return;
+                const text = essay.value.trim();
+                const wc = text ? text.split(/ +/).length : 0;
+                if (text) {{
+                    await redisSaveDraft(text, wc);
+                    saveEl.textContent = 'Автосақталды: ' + new Date().toLocaleTimeString();
+                }}
+            }}, 5000);
         }});
 
         essay.addEventListener('paste', () => {{
@@ -372,7 +417,7 @@ task_question = st.text_area("", height=120,
 if student_name.strip() and task_question.strip():
     st.markdown("---")
 
-    session_key = f"t2_{student_name.strip().replace(' ','_')}"
+    session_key = f"sid2_{student_name.strip().replace(' ','_')}"
     if session_key not in st.session_state:
         st.session_state[session_key] = datetime.now().strftime("%Y%m%d%H%M%S")
     session_id = st.session_state[session_key]
@@ -392,29 +437,29 @@ if student_name.strip() and task_question.strip():
     if st.session_state.get(done_key, False):
         result = st.session_state.get(f"result_{session_id}", {})
         if result:
-            st.success("✅ Жұмысыңыз сәтті тексерілді!")
+            st.success("✅ Эссеңіз сәтті тексерілді!")
             st.markdown(
-                f"<h2 style='text-align:center;color:#1E88E5;'>🏆 Overall Band: {result.get('overall', '—')}</h2>",
+                f"<h2 style='text-align:center;color:#1E88E5;'>🏆 Overall Band: {result['overall']}</h2>",
                 unsafe_allow_html=True)
             c1, c2, c3, c4 = st.columns(4)
-            c1.metric("Task Response", result.get("TR", "—"))
-            c2.metric("Coherence", result.get("CC", "—"))
-            c3.metric("Lexical", result.get("LR", "—"))
-            c4.metric("Grammar", result.get("GRA", "—"))
+            c1.metric("Task Response", result["TR"])
+            c2.metric("Coherence", result["CC"])
+            c3.metric("Lexical", result["LR"])
+            c4.metric("Grammar", result["GRA"])
             st.markdown("---")
             st.subheader("🛠 Жіберілген қателер")
-            for e in result.get("main_errors", []): st.warning(f"• {e}")
+            for e in result["main_errors"]: st.warning(f"• {e}")
             st.subheader("📝 Пікір")
-            st.markdown(result.get("feedback", ""))
+            st.markdown(result["feedback"])
 
-            # Мәтінді көшіру батырмасы
             st.markdown("---")
             essay_saved = st.session_state.get(f"essay_text_{session_id}", "")
             if essay_saved:
                 st.subheader("📋 Жазған мәтініңіз")
                 st.text_area("", value=essay_saved, height=200,
                              disabled=True, label_visibility="collapsed",
-                             key="saved_essay_display2")
+                             key="saved_essay_display")
+                import streamlit.components.v1 as _components
                 copy_html = f"""
                 <button id="copy-btn" onclick="copyText()" style="
                     padding:10px 20px; background:#1E88E5; color:white;
@@ -448,20 +493,20 @@ if student_name.strip() and task_question.strip():
                 }}
                 </script>
                 """
-                import streamlit.components.v1 as _components
                 _components.html(copy_html, height=60)
         st.stop()
 
     if st.session_state.get(submitting_key, False):
         with st.spinner("⏳ Эссеңіз тексерілуде..."):
             draft = None
-            for _ in range(4):
+            for i in range(2):
                 draft = get_latest_draft(session_id)
-                if draft and draft.get("draft_text","").strip():
+                if draft and draft.get("draft_text", "").strip():
                     break
-                _time.sleep(2)
+                if i == 0:
+                    _time.sleep(1.5)
 
-            essay_text = draft.get("draft_text","").strip() if draft else ""
+            essay_text = draft.get("draft_text", "").strip() if draft else ""
 
             if not essay_text:
                 st.session_state[submitting_key] = False
@@ -471,15 +516,7 @@ if student_name.strip() and task_question.strip():
                 MAX_RETRIES = 5
                 RETRY_DELAYS = [5, 10, 20, 30, 60]
 
-                genai.configure(api_key=st.secrets["gemini"]["api_key"])
-                model = genai.GenerativeModel(
-                    'gemini-2.5-flash',
-                    generation_config={
-                        "response_mime_type": "application/json",
-                        "max_output_tokens": 8000,
-                        "temperature": 0,
-                    }
-                )
+                model = get_gemini_model()
                 word_count = len(essay_text.split())
                 prompt = f"""You are an expert and strict IELTS Writing Examiner. Evaluate the student's IELTS Academic Task 2 essay based on the provided prompt/topic.
 CRITICAL RULES & SCORING PENALTIES (NEVER IGNORE):
@@ -496,26 +533,6 @@ The 'main_errors' array and 'feedback' string MUST be written entirely in natura
 Base your feedback strictly on the student's actual text. You MUST quote specific words, arguments, or sentences the student used to prove your points.
 OUTPUT FORMAT:
 Return ONLY a valid JSON object. Do not include markdown formatting like ```json, do not include explanations, and do not write any text outside the JSON structure.
-The 'feedback' string inside the JSON MUST follow this exact Markdown structure (use \\n to create line breaks within the JSON string):
-### 1. Task Response (Тақырыптың ашылуы): **[Score]**
-* [1 sentence on whether they fully addressed all parts of the prompt]
-* [1-2 sentences evaluating their main arguments and whether their position is clear throughout the essay. Quote an argument they made.]
-* [1 sentence on the quality of their examples]
-### 2. Coherence and Cohesion (Логика және байланыс): **[Score]**
-* [Comment on their paragraph structure: Introduction, Body Paragraphs, Conclusion]
-* [Quote and evaluate the linking words/transitions used between and within paragraphs]
-* **Ұсыныс:** [Actionable advice on logical flow]
-### 3. Lexical Resource (Сөздік қор): **[Score]**
-* [Quote 2-3 examples of good topic-related vocabulary they used]
-* [Point out precise errors in collocations, word choice, or repetition]
-### 4. Grammatical Range and Accuracy (Грамматика): **[Score]**
-* [Comment on sentence variety: complex vs. simple sentences]
-* [Point out 1-2 specific grammatical or punctuation errors from their text]
----
-### Қалай жақсартуға болады? (Tips for [Current Overall Score + 0.5]+)
-1. **[Specific Tip 1]:** [Actionable advice for their arguments/structure]
-2. **[Specific Tip 2]:** [Actionable advice for vocabulary/grammar]
-**Қорытынды:** [Brief encouraging summary about their critical thinking and writing skills]
 Use this exact JSON structure:
 {{
   "overall": 0.0,
@@ -523,11 +540,8 @@ Use this exact JSON structure:
   "CC": 0.0,
   "LR": 0.0,
   "GRA": 0.0,
-  "main_errors": [
-    "Бірінші нақты қате...",
-    "Екінші нақты қате..."
-  ],
-  "feedback": "### 1. Task Response (Тақырыптың ашылуы): **[Score]**\\n* [Пікір...]\\n\\n### 2. Coherence and Cohesion..."
+  "main_errors": ["Бірінші нақты қате...", "Екінші нақты қате..."],
+  "feedback": "### 1. Task Response..."
 }}
 
 The essay topic/prompt given to the student was:
