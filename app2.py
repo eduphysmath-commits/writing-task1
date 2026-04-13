@@ -349,24 +349,11 @@ def writing_component(student_name: str, session_id: str):
             }}
         }}
 
-        let autosaveTimer = null;
         essay.addEventListener('input', () => {{
             const words = essay.value.trim() ? essay.value.trim().split(/ +/).length : 0;
             wcEl.textContent = words + ' сөз';
             wcEl.style.color = words >= 250 ? '#3B6D11' : words >= 150 ? '#854F0B' : '#A32D2D';
             if (!started && !annulled) startTimer();
-
-            // Автосақтау: 5 секунд кейін (debounced)
-            if (autosaveTimer) clearTimeout(autosaveTimer);
-            autosaveTimer = setTimeout(async () => {{
-                if (annulled) return;
-                const text = essay.value.trim();
-                const wc = text ? text.split(/ +/).length : 0;
-                if (text) {{
-                    await redisSaveDraft(text, wc);
-                    saveEl.textContent = 'Автосақталды: ' + new Date().toLocaleTimeString();
-                }}
-            }}, 5000);
         }});
 
         essay.addEventListener('paste', () => {{
