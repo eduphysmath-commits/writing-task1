@@ -1,7 +1,10 @@
 import streamlit as st
 from datetime import datetime
 from supabase import create_client, Client
+import requests as _requests
+import json
 import pandas as pd
+from concurrent.futures import ThreadPoolExecutor
 
 st.set_page_config(page_title="TEN: Мұғалім мониторы", page_icon="🛡", layout="wide")
 
@@ -13,16 +16,69 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
+# ---- Supabase (тек results үшін) ----
 @st.cache_resource
 def get_supabase() -> Client:
     return create_client(st.secrets["supabase"]["url"], st.secrets["supabase"]["key"])
 
-def get_anticheat_data():
+# ---- Redis helpers ----
+def _r_url():
+    return st.secrets["redis"]["url"]
+
+def _r_headers():
+    return {"Authorization": f"Bearer {st.secrets['redis']['token']}"}
+
+def redis_get_all_drafts():
+    """Барлық белсенді draft-тарды Redis-тен алу"""
     try:
-        res = get_supabase().table("anticheat_events")\
-            .select("*").order("created_at", desc=True).limit(200).execute()
-        return res.data or []
-    except:
+        r = _requests.get(f"{_r_url()}/keys/draft:*",
+                          headers=_r_headers(), timeout=4)
+        keys = r.json().get("result", [])
+        if not keys:
+            return []
+        # Барлық мәндерді бір pipeline-да аламыз
+        r2 = _requests.post(
+            f"{_r_url()}/pipeline",
+            headers={**_r_headers(), "Content-Type": "application/json"},
+            json=[["get", k] for k in keys],
+            timeout=5
+        )
+        results = []
+        for item in r2.json():
+            val = item.get("result")
+            if val:
+                try:
+                    results.append(json.loads(val))
+                except Exception:
+                    pass
+        return results
+    except Exception:
+        return []
+
+def redis_get_all_anticheat():
+    """Барлық античит деректерін Redis-тен алу"""
+    try:
+        r = _requests.get(f"{_r_url()}/keys/ac:*",
+                          headers=_r_headers(), timeout=4)
+        keys = r.json().get("result", [])
+        if not keys:
+            return []
+        r2 = _requests.post(
+            f"{_r_url()}/pipeline",
+            headers={**_r_headers(), "Content-Type": "application/json"},
+            json=[["get", k] for k in keys],
+            timeout=5
+        )
+        results = []
+        for item in r2.json():
+            val = item.get("result")
+            if val:
+                try:
+                    results.append(json.loads(val))
+                except Exception:
+                    pass
+        return results
+    except Exception:
         return []
 
 def get_results_data():
@@ -30,25 +86,27 @@ def get_results_data():
         res = get_supabase().table("results")\
             .select("*").order("checked_at", desc=True).limit(200).execute()
         return res.data or []
-    except:
+    except Exception:
         return []
 
-def get_live_drafts():
-    try:
-        res = get_supabase().table("live_drafts")            .select("*")            .eq("submitted", 0)            .order("updated_at", desc=True)            .execute()
-        return res.data or []
-    except:
-        return []
+def load_all_data():
+    """Барлық деректерді параллель жүктеу"""
+    with ThreadPoolExecutor(max_workers=3) as ex:
+        f_drafts  = ex.submit(redis_get_all_drafts)
+        f_ac      = ex.submit(redis_get_all_anticheat)
+        f_results = ex.submit(get_results_data)
+        return f_drafts.result(), f_ac.result(), f_results.result()
 
-# Session state — бет ашылғанда автоматты жүктейміз
+# ---- Session state ----
 if "data_loaded" not in st.session_state:
     st.session_state["data_loaded"] = False
 
 if not st.session_state["data_loaded"]:
-    st.session_state["live_drafts_cache"] = get_live_drafts()
-    st.session_state["ac_cache"] = get_anticheat_data()
-    st.session_state["results_cache"] = get_results_data()
-    st.session_state["live_last_updated"] = datetime.now().strftime("%H:%M:%S")
+    drafts, ac, results = load_all_data()
+    st.session_state["live_drafts_cache"]  = drafts
+    st.session_state["ac_cache"]           = ac
+    st.session_state["results_cache"]      = results
+    st.session_state["live_last_updated"]  = datetime.now().strftime("%H:%M:%S")
     st.session_state["data_loaded"] = True
 
 for key, val in [
@@ -69,9 +127,10 @@ with col_h1:
                 unsafe_allow_html=True)
 with col_h2:
     if st.button("📂 Оқушылар жазған жұмыстарын ашу", use_container_width=True):
-        st.session_state["live_drafts_cache"] = get_live_drafts()
-        st.session_state["ac_cache"] = get_anticheat_data()
-        st.session_state["results_cache"] = get_results_data()
+        drafts, ac, results = load_all_data()
+        st.session_state["live_drafts_cache"] = drafts
+        st.session_state["ac_cache"]          = ac
+        st.session_state["results_cache"]     = results
         st.session_state["live_last_updated"] = datetime.now().strftime("%H:%M:%S")
         st.rerun()
 
@@ -130,7 +189,11 @@ with tab1:
         st.caption(f"Соңғы жаңарту: {st.session_state['live_last_updated']} · {len(drafts_all)} оқушы жазып жатыр")
     with col_l2:
         if st.button("📂 Жұмыстарды жаңарту", key="live_ref", help="Тек live жаңарту"):
-            st.session_state["live_drafts_cache"] = get_live_drafts()
+            with ThreadPoolExecutor(max_workers=2) as ex:
+                f_d = ex.submit(redis_get_all_drafts)
+                f_a = ex.submit(redis_get_all_anticheat)
+                st.session_state["live_drafts_cache"] = f_d.result()
+                st.session_state["ac_cache"]          = f_a.result()
             st.session_state["live_last_updated"] = datetime.now().strftime("%H:%M:%S")
             st.rerun()
 
@@ -163,54 +226,27 @@ with tab1:
                     <span style="font-size:14px;font-weight:500;color:var(--color-text-primary);">{name}</span>
                     <div style="display:flex;align-items:center;gap:8px;">
                         <span style="font-size:11px;background:{badge_bg};color:{badge_color};
-                                     padding:2px 10px;border-radius:20px;">{word_count} сөз</span>
+                                     padding:2px 10px;border-radius:20px;font-weight:500;">{word_count} сөз</span>
                         <span style="font-size:11px;color:var(--color-text-secondary);">{updated_at}</span>
                     </div>
                 </div>
-                <div style="background:var(--color-background-secondary);border-radius:4px;height:5px;overflow:hidden;">
-                    <div style="width:{int(progress*100)}%;height:100%;background:{p_color};border-radius:4px;"></div>
+                <div style="background:var(--color-background-secondary);border-radius:4px;height:6px;margin-bottom:8px;">
+                    <div style="width:{progress*100:.0f}%;background:{p_color};height:6px;border-radius:4px;transition:width 0.3s;"></div>
                 </div>
-                <div style="display:flex;justify-content:space-between;font-size:11px;
-                            color:var(--color-text-secondary);margin-top:4px;">
-                    <span style="color:{p_color};font-weight:500;">{int(progress*100)}%</span>
-                    <span>Минимум: 150 сөз</span>
-                </div>
+                <div style="font-size:13px;color:var(--color-text-secondary);
+                            white-space:pre-wrap;max-height:80px;overflow:hidden;
+                            text-overflow:ellipsis;">{draft_text[:300]}{'...' if len(draft_text) > 300 else ''}</div>
             </div>
             """, unsafe_allow_html=True)
-
-            if draft_text.strip():
-                with st.expander("Мәтінді көру"):
-                    st.text_area("", value=draft_text, height=180, disabled=True,
-                                 key=f"dt_{d.get('session_id','')}", label_visibility="collapsed")
 
 # ==========================================
 # ТАБ 2: АНТИЧИТ
 # ==========================================
 with tab2:
-    events = st.session_state["ac_cache"]
-    clean  = [e for e in events if e.get("event_type") not in ("autosave","start","timer_start")]
-
-    if not clean:
-        st.info("Жұмыстарды ашу батырмасын басыңыз немесе оқиға жоқ.")
+    if not events_all:
+        st.info("Оқиғалар жоқ немесе жұмыстарды ашу батырмасын басыңыз.")
     else:
-        col_f1, col_f2 = st.columns(2)
-        with col_f1:
-            names = sorted(set(e.get("student_name","") for e in clean))
-            sel_name = st.selectbox("Оқушы:", ["Барлығы"] + names)
-        with col_f2:
-            etypes = sorted(set(e.get("event_type","") for e in clean))
-            sel_type = st.selectbox("Оқиға:", ["Барлығы"] + etypes)
-
-        filtered = clean
-        if sel_name != "Барлығы":
-            filtered = [e for e in filtered if e.get("student_name") == sel_name]
-        if sel_type != "Барлығы":
-            filtered = [e for e in filtered if e.get("event_type") == sel_type]
-
-        st.caption(f"Барлығы: {len(filtered)} оқиға")
-        st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
-
-        for ev in filtered:
+        for ev in events_all:
             name       = ev.get("student_name", "—")
             event_type = ev.get("event_type", "—")
             blur       = ev.get("blur_count", 0)
@@ -282,7 +318,7 @@ with tab3:
                 if ov >= 7.0:   ov_color, ov_bg = "#27500A", "#EAF3DE"
                 elif ov >= 6.0: ov_color, ov_bg = "#854F0B", "#FAEEDA"
                 else:           ov_color, ov_bg = "#A32D2D", "#FCEBEB"
-            except:
+            except Exception:
                 ov_color, ov_bg = "#3C3489", "#EEEDFE"
 
             task_type = r.get("task_type", "Task 1")
@@ -296,7 +332,7 @@ with tab3:
                         <p style="margin:0;font-size:22px;font-weight:500;color:{ov_color};">{overall}</p>
                     </div>
                     <div style="background:var(--color-background-secondary);border-radius:8px;padding:12px;text-align:center;">
-                        <p style="margin:0 0 2px;font-size:11px;color:var(--color-text-secondary);">{{ta_label}}</p>
+                        <p style="margin:0 0 2px;font-size:11px;color:var(--color-text-secondary);">{ta_label}</p>
                         <p style="margin:0;font-size:22px;font-weight:500;color:var(--color-text-primary);">{ta}</p>
                     </div>
                     <div style="background:var(--color-background-secondary);border-radius:8px;padding:12px;text-align:center;">
